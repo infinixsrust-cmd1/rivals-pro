@@ -53,13 +53,31 @@ local Misc = loadModule("nl/modules/misc.lua", Common)
 if not (Aimbot and ESP and Move and Misc) then warn("[nl] modules failed") return end
 
 local Mods = {Aimbot=Aimbot, ESP=ESP}
+-- light boot: only cheap modules now. Heavy ones (silent/gun/skins)
+-- start lazily on first toggle — Rivals freezes if all require() at inject.
 Aimbot.start(C)
-do local ok, err = Silent.start(C) if not ok then print("[nl] silent off:", tostring(err)) end end
 ESP.start(C)
-GunM.start(C)
 Move.start(C)
-Skins.start(C)
 Misc.start(C)
+local lazy = {silent=false, gun=false, skins=false}
+local function ensureSilent()
+    if lazy.silent then return end
+    lazy.silent = true
+    task.spawn(function()
+        local ok, err = Silent.start(C)
+        print("[nl] silent lazy:", tostring(ok), tostring(err))
+    end)
+end
+local function ensureGun()
+    if lazy.gun then return end
+    lazy.gun = true
+    task.spawn(function() GunM.start(C) end)
+end
+local function ensureSkins()
+    if lazy.skins then return end
+    lazy.skins = true
+    task.spawn(function() Skins.start(C) end)
+end
 
 -- imgui menu
 local Im = loadModule("nl/ui/imgui.lua", Common, C, Mods)
@@ -117,7 +135,7 @@ local function buildPage(name)
         Im.checkbox(R, "sticky target", C.Aim, "Sticky")
     elseif name == "Silent" then
         Im.group(L, "silent aim")
-        Im.checkbox(L, "enabled", C.Silent, "Enabled")
+        Im.checkbox(L, "enabled", C.Silent, "Enabled", function(v) if v then ensureSilent() end end)
         Im.slider(L, "hit chance", C.Silent, "Hit", 1, 100, 1)
         Im.slider(L, "max dist", C.Silent, "Dist", 100, 3000, 50)
         Im.group(R, "checks")
@@ -137,16 +155,16 @@ local function buildPage(name)
         Im.slider(R, "max dist", C.ESP, "MaxD", 200, 5000, 100)
     elseif name == "Combat" then
         Im.group(L, "weapon")
-        Im.checkbox(L, "no recoil", C.Gun, "NoRecoil")
-        Im.checkbox(L, "no spread", C.Gun, "NoSpread")
-        Im.checkbox(L, "rapid fire", C.Gun, "Rapid")
+        Im.checkbox(L, "no recoil", C.Gun, "NoRecoil", function(v) if v then ensureGun() end end)
+        Im.checkbox(L, "no spread", C.Gun, "NoSpread", function(v) if v then ensureGun() end end)
+        Im.checkbox(L, "rapid fire", C.Gun, "Rapid", function(v) if v then ensureGun() end end)
         Im.slider(L, "rate mult", C.Gun, "RapidX", 1, 5, 0.5)
         Im.group(R, "ammo")
-        Im.checkbox(R, "infinite ammo", C.Gun, "InfAmmo")
-        Im.checkbox(R, "instant reload", C.Gun, "Reload")
+        Im.checkbox(R, "infinite ammo", C.Gun, "InfAmmo", function(v) if v then ensureGun() end end)
+        Im.checkbox(R, "instant reload", C.Gun, "Reload", function(v) if v then ensureGun() end end)
     elseif name == "Skins" then
         Im.group(L, "changer")
-        Im.checkbox(L, "enabled", C.Skin, "Enabled")
+        Im.checkbox(L, "enabled", C.Skin, "Enabled", function(v) if v then ensureSkins() end end)
         local wb = Im.button(L, "weapon: " .. tostring(C.Skin.Weapon), function() end)
         wb.MouseButton1Click:Connect(function()
             local ws = Skins.Weapons()

@@ -4,7 +4,7 @@
 local Common = ...
 assert(Common and Common.LP, "skins: Common not injected")
 
-local Skin = {libs = false, equipped = {}, mods = {}}
+local Skin = {libs = false, equipped = {}, mods = {}, started = false}
 
 function Skin.Clone(name, ctype)
     local CLB = Skin.mods.CLB
@@ -65,6 +65,8 @@ function Skin.Apply(C)
 end
 
 function Skin.start(C)
+    if Skin.started then return end
+    Skin.started = true
     task.spawn(function()
         pcall(function()
             local LP = Common.LP

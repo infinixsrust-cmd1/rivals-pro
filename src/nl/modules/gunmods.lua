@@ -3,9 +3,11 @@
 local Common = ...
 assert(Common and Common.LP, "gunmods: Common not injected")
 
-local Gun = {cache = nil, cacheAt = 0}
+local Gun = {cache = nil, cacheAt = 0, started = false}
 
 function Gun.start(C)
+    if Gun.started then return end
+    Gun.started = true
     task.spawn(function()
         while true do
             task.wait(8)

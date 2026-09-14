@@ -6,6 +6,7 @@ assert(Common and Common.LP, "aimbot: Common not injected")
 
 local Aimbot = {}
 Aimbot.holding, Aimbot.toggled, Aimbot.target, Aimbot.targetName = false, false, nil, "none"
+Aimbot._lastPick, Aimbot._cached = 0, {nil, nil}
 Aimbot.FOVc = Common.mkDraw("Circle", {Thickness=1.5, NumSides=64, Filled=false, Transparency=1})
 Aimbot.FOVdot = Common.mkDraw("Circle", {Radius=3, Filled=true, Transparency=1})
 
@@ -20,6 +21,16 @@ function Aimbot.valid(p, A)
 end
 
 function Aimbot.pick(A)
+    -- throttle full scans to ~30Hz; reuse cache between (Rivals perf)
+    local now = os.clock()
+    if now - Aimbot._lastPick < 0.033 and Aimbot._cached[1] ~= nil then
+        -- still validate sticky cheaply
+        local cp, cpt = Aimbot._cached[1], Aimbot._cached[2]
+        if cp and cpt and cpt.Parent then
+            return cp, cpt
+        end
+    end
+    Aimbot._lastPick = now
     local mp = Common.UIS:GetMouseLocation()
     if A.Sticky and Aimbot.target and Aimbot.valid(Aimbot.target, A) then
         local pt = Common.partOf(Common.charOf(Aimbot.target), A.Part)
@@ -51,6 +62,7 @@ function Aimbot.pick(A)
     end
     Aimbot.target = best
     Aimbot.targetName = best and best.Name or "none"
+    Aimbot._cached = {best, bp}
     return best, bp
 end
 

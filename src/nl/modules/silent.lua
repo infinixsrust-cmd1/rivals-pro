@@ -4,12 +4,14 @@
 local Common = ...
 assert(Common and Common.LP, "silent: Common not injected")
 
-local Silent = {}
+local Silent = {started = false}
 
 function Silent.start(C)
+    if Silent.started then return true end
     if typeof(hookmetamethod) ~= "function" or typeof(getnamecallmethod) ~= "function" then
         return false, "no hookmetamethod"
     end
+    Silent.started = true
     local S = C.Silent
     local old
     old = hookmetamethod(game, "__namecall", function(self, ...)

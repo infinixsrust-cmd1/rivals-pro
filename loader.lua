@@ -4,8 +4,8 @@
 --  открой RIVALS -> вставь -> Execute
 -- ═══════════════════════════════════════════
 
--- ВАРИАНТ 1: загрузка с github (залей папку src в свой репозиторий и поменяй ссылку)
-getgenv().RIVALSPRO_BASE = "https://raw.githubusercontent.com/YOURNAME/rivals-pro/main/src"
+-- ВАРИАНТ 1: загрузка с github
+getgenv().RIVALSPRO_BASE = "https://raw.githubusercontent.com/infinixsrust-cmd1/rivals-pro/main/src"
 loadstring(game:HttpGet(getgenv().RIVALSPRO_BASE .. "/main.lua"))()
 
 -- ───────────────────────────────────────────

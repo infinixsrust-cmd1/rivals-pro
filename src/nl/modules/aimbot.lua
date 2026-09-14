@@ -103,6 +103,7 @@ function Aimbot.start(C)
         end
     end)
     Common.RS.RenderStepped:Connect(function(dt)
+        local ok, err = pcall(function()
         if Aimbot.FOVc then
             local show = A.Enabled and A.ShowFOV
             Aimbot.FOVc.Visible = show and true or false
@@ -164,6 +165,11 @@ function Aimbot.start(C)
         local s = math.clamp(A.Smooth, 1, 20)
         local alpha = math.clamp(1 - math.exp(-dt * (30 / s) * 2), 0.02, 1)
         c.CFrame = c.CFrame:Lerp(goal, alpha)
+        end)
+        if not ok then
+            Aimbot._err = (Aimbot._err or 0) + 1
+            if Aimbot._err < 5 then warn("[nl] aim frame: " .. tostring(err)) end
+        end
     end)
 end
 

@@ -24,6 +24,7 @@ function ESP.start(C)
         if s then for _, d in pairs(s) do pcall(function() d.Visible = false end) end ESP.objs[p] = nil end
     end)
     Common.RS.RenderStepped:Connect(function()
+        local ok, err = pcall(function()
         for _, p in ipairs(Common.Players:GetPlayers()) do
             local s = ESP.get(p)
             if not s then continue end
@@ -84,6 +85,11 @@ function ESP.start(C)
                 s.tr.To = Vector2.new(tv.X, y + h / 2)
                 s.tr.Color = E.Color
             end
+        end
+        end)
+        if not ok then
+            ESP._err = (ESP._err or 0) + 1
+            if ESP._err < 5 then warn("[nl] esp frame: " .. tostring(err)) end
         end
     end)
 end

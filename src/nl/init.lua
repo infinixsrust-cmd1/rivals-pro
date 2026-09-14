@@ -190,7 +190,17 @@ if not Im then
     warn("[nl] ui failed") return
 end
 
-local function clearCols()
+local function safeBuild(n)
+    cur = n
+    local ok, err = pcall(buildPage, n)
+    if not ok then
+        warn("[nl] page " .. tostring(n) .. ": " .. tostring(err))
+        pcall(function()
+            local e = Im.status(Im.left, 60)
+            e.Text = "page error: " .. tostring(err):sub(1, 120)
+        end)
+    end
+end
     for _, c in ipairs({Im.left, Im.right}) do
         for _, w in ipairs(c:GetChildren()) do
             if not w:IsA("UIListLayout") and not w:IsA("UIPadding") then w:Destroy() end
@@ -333,7 +343,7 @@ prog(1, "ready")
 pcall(function() splashGui:Destroy() end)
 -- destroy the splash that imgui.build also makes (we already showed ours)
 local okBuild, errBuild = pcall(function()
-    Im.build(pages, cur, function(n) cur = n buildPage(n) end)
+    Im.build(pages, cur, function(n) safeBuild(n) end)
 end)
 if not okBuild then
     warn("[nl] menu build failed: " .. tostring(errBuild))
@@ -342,7 +352,7 @@ if not okBuild then
 end
 Im.finish()
 -- synced navigation: tabs + left list always agree
-local function go(n) Im.select(n, function(nn) cur = nn buildPage(nn) end) end
+local function go(n) Im.select(n, function(nn) safeBuild(nn) end) end
 -- rewire tab buttons through select (built inside imgui)
 for n, b in pairs(Im.tabBtns) do
     -- clear old connections by cloning
@@ -355,5 +365,5 @@ end
 go(cur)
 
 getgenv().rivalspro = {cfg = C, Mods = Mods}
-Common.notify("rivals.pro", "NL modular loaded | INS = menu")
-print("rivals.pro NL modular ok")
+Common.notify("rivals.pro", "NL v4 guarded | INS = menu")
+print("rivals.pro NL v4 guarded ok")

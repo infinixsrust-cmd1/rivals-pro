@@ -8,7 +8,8 @@ local BASE = getgenv().RIVALSPRO_BASE or "https://raw.githubusercontent.com/infi
 -- bundle file: src/nl_bundle.txt with --@@FILE:name markers.
 local Bundle = {}
 local function loadBundle()
-    local url = BASE .. "/nl_bundle.txt"
+    -- cachebuster: executor/CDN cache stale bundles otherwise
+    local url = BASE .. "/nl_bundle.txt?x=" .. tostring(os.time())
     local ok, src = pcall(game.HttpGet, game, url)
     if not ok or not src or #src < 1000 then
         return false, "bundle http fail (" .. tostring(src):sub(1, 80) .. ")"
@@ -267,7 +268,13 @@ local function buildPage(name)
         end)
         Im.group(L, "pick skin (click = wear)")
         do
-            local list = Skins.List(24)
+            local list = {}
+            if Skins and Skins.List then
+                list = Skins.List(24)
+            else
+                local h = Im.status(L, 40)
+                h.Text = "skins module failed to load: re-execute"
+            end
             if #list == 0 then
                 local h = Im.status(L, 40)
                 h.Text = "empty: UNLOCK, wait unlocked, REFRESH LIST"

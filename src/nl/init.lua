@@ -4,17 +4,47 @@
 
 local BASE = getgenv().RIVALSPRO_BASE or "https://raw.githubusercontent.com/infinixsrust-cmd1/rivals-pro/main/src"
 
-local function loadModule(path, ...)
-    local url = BASE .. "/" .. path
+-- SINGLE HttpGet bundle (Rivals chokes on many sequential HttpGets).
+-- bundle file: src/nl_bundle.txt with --@@FILE:name markers.
+local Bundle = {}
+local function loadBundle()
+    local url = BASE .. "/nl_bundle.txt"
     local ok, src = pcall(game.HttpGet, game, url)
-    if not ok or not src or #src < 10 then
-        warn("[nl] http fail: " .. path)
+    if not ok or not src or #src < 1000 then
+        return false, "bundle http fail (" .. tostring(src):sub(1, 80) .. ")"
+    end
+    local cur, buf = nil, {}
+    local function flush()
+        if cur and #buf > 0 then
+            Bundle[cur] = table.concat(buf, "\n")
+        end
+        buf = {}
+    end
+    for line in (src .. "\n"):gmatch("(.-)\n") do
+        local m = line:match("^%-%-@@FILE:(.+)$")
+        if m then
+            flush()
+            cur = m:gsub("%s+$", "")
+        elseif line:match("^%-%-@@END") then
+            flush()
+            cur = nil
+        elseif cur then
+            buf[#buf+1] = line
+        end
+    end
+    flush()
+    return true
+end
+
+local function loadModule(name, ...)
+    local src = Bundle[name]
+    if not src then
         return nil
     end
     local fn, err = loadstring(src)
-    if not fn then warn("[nl] load fail: " .. path .. " " .. tostring(err)) return nil end
+    if not fn then warn("[nl] load fail: " .. name .. " " .. tostring(err)) return nil end
     local ok2, mod = pcall(fn, ...)
-    if not ok2 then warn("[nl] run fail: " .. path .. " " .. tostring(mod)) return nil end
+    if not ok2 then warn("[nl] run fail: " .. name .. " " .. tostring(mod)) return nil end
     return mod
 end
 
@@ -82,25 +112,39 @@ local function prog(p, t)
     task.wait(0.05)
 end
 
--- core + modules (separate files) with splash progress
-local Common = loadModule("nl/modules/common.lua")
-if not Common then warn("[nl] common failed") return end
-prog(0.15, "core...")
-local Aimbot = loadModule("nl/modules/aimbot.lua", Common)
+-- core + modules from ONE bundle fetch (fast in Rivals)
+prog(0.1, "downloading...")
+local okB, errB = loadBundle()
+if not okB then
+    pcall(function()
+        splashTxt.Text = "ERR: " .. tostring(errB)
+    end)
+    warn("[nl] " .. tostring(errB))
+    return
+end
+local Common = loadModule("common.lua")
+if not Common then
+    pcall(function() splashTxt.Text = "ERR: common" end)
+    warn("[nl] common failed") return
+end
 prog(0.3, "aimbot...")
-local Silent = loadModule("nl/modules/silent.lua", Common)
+local Aimbot = loadModule("aimbot.lua", Common)
 prog(0.42, "silent...")
-local ESP = loadModule("nl/modules/esp.lua", Common)
+local Silent = loadModule("silent.lua", Common)
 prog(0.54, "esp...")
-local GunM = loadModule("nl/modules/gunmods.lua", Common)
+local ESP = loadModule("esp.lua", Common)
 prog(0.66, "combat...")
-local Move = loadModule("nl/modules/movement.lua", Common)
+local GunM = loadModule("gunmods.lua", Common)
 prog(0.76, "movement...")
-local Skins = loadModule("nl/modules/skins.lua", Common)
+local Move = loadModule("movement.lua", Common)
 prog(0.86, "skins...")
-local Misc = loadModule("nl/modules/misc.lua", Common)
+local Skins = loadModule("skins.lua", Common)
 prog(0.93, "finishing...")
-if not (Aimbot and ESP and Move and Misc) then warn("[nl] modules failed") return end
+local Misc = loadModule("misc.lua", Common)
+if not (Aimbot and ESP and Move and Misc) then
+    pcall(function() splashTxt.Text = "ERR: modules" end)
+    warn("[nl] modules failed") return
+end
 
 local Mods = {Aimbot=Aimbot, ESP=ESP}
 -- light boot: only cheap modules now. Heavy ones (silent/gun/skins)
@@ -137,8 +181,11 @@ local cur = "Aimbot"
 
 -- real menu build: tabs created inside imgui (direct refs, no searching)
 prog(0.96, "menu...")
-local Im = loadModule("nl/ui/imgui.lua", Common, C, Mods)
-if not Im then warn("[nl] ui failed") return end
+local Im = loadModule("imgui.lua", Common, C, Mods)
+if not Im then
+    pcall(function() splashTxt.Text = "ERR: menu" end)
+    warn("[nl] ui failed") return
+end
 
 local function clearCols()
     for _, c in ipairs({Im.left, Im.right}) do

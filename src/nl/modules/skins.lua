@@ -182,7 +182,7 @@ function Skin.start(C)
                 end
             end)
             Skin.libs = true
-            C.Skin.Status = "ready (safe mode: pick skins in locker)"
+            C.Skin.Status = "unlocked: open locker"
         end)
     end)
 end

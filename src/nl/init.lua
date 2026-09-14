@@ -141,6 +141,8 @@ prog(0.86, "skins...")
 local Skins = loadModule("skins.lua", Common)
 prog(0.93, "finishing...")
 local Misc = loadModule("misc.lua", Common)
+prog(0.95, "config...")
+local Cfg = loadModule("cfg.lua", Common)
 if not (Aimbot and ESP and Move and Misc) then
     pcall(function() splashTxt.Text = "ERR: modules" end)
     warn("[nl] modules failed") return
@@ -175,7 +177,7 @@ end
 
 -- imgui menu (real build at end)
 
-local pages = {"Aimbot", "Silent", "ESP", "Combat", "Skins", "Move", "Misc"}
+local pages = {"Aimbot", "Silent", "ESP", "Combat", "Skins", "Move", "Misc", "Config"}
 local groups = {} -- page -> {left widgets parent, right}
 local cur = "Aimbot"
 
@@ -244,58 +246,40 @@ local function buildPage(name)
         Im.checkbox(R, "infinite ammo", C.Gun, "InfAmmo", function(v) if v then ensureGun() end end)
         Im.checkbox(R, "instant reload", C.Gun, "Reload", function(v) if v then ensureGun() end end)
     elseif name == "Skins" then
-        Im.group(L, "step 1 - enable")
-        Im.checkbox(L, "enabled", C.Skin, "Enabled", function(v) if v then ensureSkins() end end)
-        Im.group(L, "step 2 - pick weapon (click)")
-        do
-            local ws = Skins.Weapons()
-            for i = 1, math.min(#ws, 10) do
-                local wname = ws[i]
-                local wb = Im.button(L, (wname == C.Skin.Weapon and "> " or "") .. wname, function()
-                    C.Skin.Weapon = wname
-                    buildPage("Skins")
-                end)
-                if wname == C.Skin.Weapon then wb.BackgroundColor3 = Im.ACC end
-            end
-            if #ws == 0 then
-                local h = Im.status(L, 30) h.Text = "weapons load after match start"
-            end
-        end
-        Im.group(R, "step 3 - pick skin (click = apply)")
-        do
-            local list = Skins.List(24)
-            if #list == 0 then
-                local h = Im.status(R, 40)
-                h.Text = "skin list appears when libs ready. or type name below."
-            end
-            for _, sname in ipairs(list) do
-                Im.button(R, sname, function()
-                    ensureSkins()
-                    C.Skin.Skin = sname
-                    C.Skin.Enabled = true
-                    Skins.Apply(C)
-                end)
-            end
-        end
-        Im.group(R, "manual (exact name)")
-        local sb = Im.textbox(R, "skin name (exact)")
-        sb.FocusLost:Connect(function() C.Skin.Skin = sb.Text end)
-        Im.button(R, "APPLY TYPED NAME", function()
+        Im.group(L, "unlock all")
+        Im.button(L, "UNLOCK ALL SKINS", function()
             ensureSkins()
-            C.Skin.Skin = sb.Text
             C.Skin.Enabled = true
-            Skins.Apply(C)
+            C.Skin.Status = "unlocking..."
         end)
+        Im.group(L, "how it works")
+        local h = Im.status(L, 90)
+        h.Text = "1. press UNLOCK ALL SKINS\n2. wait: status = unlocked\n3. open Weapons locker\n4. equip any skin (client-side)"
         Im.group(R, "status")
         local st2 = Im.status(R, 60)
         st2.Text = "idle"
         task.spawn(function()
             while true do
                 task.wait(1)
-                local ok = pcall(function() st2.Text = "weapon: " .. C.Skin.Weapon .. "\nstatus: " .. C.Skin.Status .. "\nafter apply: re-equip weapon (swap slot)" end)
+                local ok = pcall(function() st2.Text = "status: " .. C.Skin.Status end)
                 if not ok or not st2.Parent then break end
             end
         end)
+    elseif name == "Config" then
+        Im.group(L, "config")
+        local nb = Im.textbox(L, "name (default)")
+        Im.button(L, "SAVE", function()
+            local ok, msg = Cfg.save(C, nb.Text)
+            Common.notify("cfg", ok and ("saved " .. Cfg.cur) or ("save fail: " .. tostring(msg)))
+        end)
+        Im.button(L, "LOAD", function()
+            local ok, msg = Cfg.load(C, nb.Text)
+            Common.notify("cfg", ok and ("loaded (" .. tostring(msg) .. ")") or ("load fail: " .. tostring(msg)))
+            if ok then buildPage("Config") end
+        end)
+        Im.group(R, "info")
+        local hc = Im.status(R, 90)
+        hc.Text = "saves toggles + sliders to rivals-pro/<name>.lua. keybinds and colors are not saved."
     elseif name == "Move" then
         Im.group(L, "movement")
         Im.checkbox(L, "speed", C.Move, "Speed")

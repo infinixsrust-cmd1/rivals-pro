@@ -271,7 +271,14 @@ end
 prog(1, "ready")
 pcall(function() splashGui:Destroy() end)
 -- destroy the splash that imgui.build also makes (we already showed ours)
-Im.build(pages, cur, function(n) cur = n buildPage(n) end)
+local okBuild, errBuild = pcall(function()
+    Im.build(pages, cur, function(n) cur = n buildPage(n) end)
+end)
+if not okBuild then
+    warn("[nl] menu build failed: " .. tostring(errBuild))
+    Common.notify("menu error", tostring(errBuild))
+    return
+end
 Im.finish()
 buildPage(cur)
 -- sync left category list with tabs

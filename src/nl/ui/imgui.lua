@@ -87,10 +87,10 @@ function Im.build(pages, curName, onPick)
     sfill.BackgroundColor3 = Im.ACC sfill.Parent = sbar
     Instance.new("UICorner", sfill).CornerRadius = UDim.new(1, 0)
     Im.splash, Im.splashFill, Im.splashStatus = splash, sfill, ss
-    win.Visible = false
 
     -- main window
     local win = Instance.new("Frame")
+    win.Visible = false -- hidden until Im.finish()
     win.Size = UDim2.new(0, 620, 0, 400) win.Position = UDim2.new(0.5, -310, 0.5, -200)
     win.BackgroundColor3 = Im.BG win.BorderSizePixel = 0
     win.Active = true win.Draggable = true win.Parent = gui

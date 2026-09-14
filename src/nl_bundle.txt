@@ -777,8 +777,47 @@ function Skin.start(C)
             -- VIEWMODEL hook REMOVED (froze the game). Back to data merge only:
             -- Wear stores skin, GetWeaponData serves it. If game snapshot
             -- ignores it, skins stay locker-only. No freeze > no skin.
+            -- VIEWMODEL bypass v2: DIRECT paths only (no deep scans).
+            -- If this freezes, report and it gets reverted same day.
+            pcall(function()
+                local LP2 = Common.LP
+                C.Skin.Status = "vm hook..."
+                local ps = LP2 and LP2:FindFirstChild("PlayerScripts")
+                local mods = ps and ps:FindFirstChild("Modules")
+                local crc = mods and mods:FindFirstChild("ClientReplicatedClasses")
+                local cf = crc and crc:FindFirstChild("ClientFighter")
+                local ciMod = cf and cf:FindFirstChild("ClientItem")
+                if not ciMod then
+                    C.Skin.Status = "unlocked (no vm path)"
+                    return
+                end
+                local CI = require(ciMod)
+                if CI and CI._CreateViewModel and not Skin._vmHook then
+                    Skin._vmHook = true
+                    local orig = CI._CreateViewModel
+                    CI._CreateViewModel = function(self, ref)
+                        pcall(function()
+                            local wpn = self.Name
+                            local pl = self.ClientFighter and self.ClientFighter.Player
+                            local eq = Skin.equipped[wpn]
+                            if pl == LP2 and eq and eq.Skin and ref then
+                                if ref.Data then
+                                    ref.Data.Skin = eq.Skin
+                                    ref.Data.Name = eq.Skin.Name
+                                end
+                            end
+                        end)
+                        return orig(self, ref)
+                    end
+                    C.Skin.Status = "unlocked + vm bypass"
+                else
+                    C.Skin.Status = "unlocked (vm taken)"
+                end
+            end)
+            if C.Skin.Status == "unlocked: pick skin below" then
+                -- keep legacy text if hook block skipped
+            end
             Skin.libs = true
-            set("unlocked: pick skin below")
         end)
         if not ok then
             set("ERR: " .. tostring(err):sub(1, 90))

@@ -182,7 +182,7 @@ end
 
 -- imgui menu (real build at end)
 
-local pages = {"Aimbot", "Silent", "ESP", "Combat", "Move", "Misc", "Config"}
+local pages = {"Aimbot", "Silent", "ESP", "Combat", "Skins", "Move", "Misc", "Config"}
 local groups = {} -- page -> {left widgets parent, right}
 local cur = "Aimbot"
 

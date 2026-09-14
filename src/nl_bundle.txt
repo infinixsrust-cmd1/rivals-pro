@@ -764,8 +764,9 @@ function Skin.start(C)
                                 if data then
                                     Skin.equipped[wpn] = Skin.equipped[wpn] or {}
                                     Skin.equipped[wpn][ctype] = data
-                                    C.Skin.Status = "equipped " .. tostring(cname) .. " (local)"
-                                    return -- swallow: server keeps legit state
+                                    C.Skin.Status = "sent " .. tostring(cname) .. " to server"
+                                    -- FORWARD (not swallow): Owns* patches say we own it,
+                                    -- if server trusts client checks, skin applies for real
                                 end
                             end
                         end

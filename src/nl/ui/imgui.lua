@@ -115,6 +115,7 @@ function Im.build()
     -- tab row is driven by init.lua (finds Frame at Y=32 area); keep compatible:
     -- medusa has no text tabs; we keep a slim tab strip under header for init.lua hooks
     local tabs = Instance.new("Frame")
+    tabs.Name = "TabStrip"
     tabs.Size = UDim2.new(1, -16, 0, 28) tabs.Position = UDim2.new(0, 8, 0, 56)
     tabs.BackgroundTransparency = 1 tabs.Parent = win
     local tl = Instance.new("UIListLayout", tabs)
@@ -129,6 +130,26 @@ function Im.build()
     local cp = Instance.new("UIPadding", cat)
     cp.PaddingTop = UDim.new(0, 6) cp.PaddingLeft = UDim.new(0, 6) cp.PaddingRight = UDim.new(0, 6)
     Im.cat = cat
+    Im.catBtns = {}
+    -- medusa left category list (mirrors tabs)
+    function Im.paintCat(names, curName, onPick)
+        for _, w in ipairs(cat:GetChildren()) do
+            if w:IsA("TextButton") then w:Destroy() end
+        end
+        Im.catBtns = {}
+        for _, n in ipairs(names) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 26) b.AutoButtonColor = false
+            b.BackgroundColor3 = (n == curName) and Im.ROW or Im.PANEL
+            b.BorderSizePixel = 0
+            b.Text = " " .. n b.Font = Enum.Font.Gotham b.TextSize = 12
+            b.TextColor3 = (n == curName) and Im.ACC or Im.DIM
+            b.TextXAlignment = Enum.TextXAlignment.Left b.Parent = cat
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+            b.MouseButton1Click:Connect(function() onPick(n) end)
+            Im.catBtns[n] = b
+        end
+    end
 
     local body = Instance.new("ScrollingFrame")
     body.Size = UDim2.new(1, -174, 1, -96) body.Position = UDim2.new(0, 166, 0, 88)

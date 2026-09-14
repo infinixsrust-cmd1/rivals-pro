@@ -83,18 +83,20 @@ end
 local Im = loadModule("nl/ui/imgui.lua", Common, C, Mods)
 Im.build()
 
--- tab bar buttons
+-- tab bar buttons (find strip by name; fallback legacy scan)
 local win = Im.win
-local tabsBar = nil
-for _, ch in ipairs(win:GetChildren()) do
-    if ch:IsA("Frame") and ch.Name == "" and ch.Size.Y.Offset == 28 then tabsBar = ch break end
+local tabsBar = win:FindFirstChild("TabStrip")
+if not tabsBar then
+    for _, ch in ipairs(win:GetChildren()) do
+        if ch:IsA("Frame") and ch.Size.Y.Offset == 28 then tabsBar = ch break end
+    end
 end
--- fallback: find by position
 if not tabsBar then
     for _, ch in ipairs(win:GetChildren()) do
         if ch:IsA("Frame") and ch.Position.Y.Offset == 32 then tabsBar = ch break end
     end
 end
+assert(tabsBar, "[nl] tab strip not found")
 
 local pages = {"Aimbot", "Silent", "ESP", "Combat", "Skins", "Move", "Misc"}
 local groups = {} -- page -> {left widgets parent, right}
@@ -163,37 +165,58 @@ local function buildPage(name)
         Im.checkbox(R, "infinite ammo", C.Gun, "InfAmmo", function(v) if v then ensureGun() end end)
         Im.checkbox(R, "instant reload", C.Gun, "Reload", function(v) if v then ensureGun() end end)
     elseif name == "Skins" then
-        Im.group(L, "changer")
+        Im.group(L, "step 1 - enable")
         Im.checkbox(L, "enabled", C.Skin, "Enabled", function(v) if v then ensureSkins() end end)
-        local wb = Im.button(L, "weapon: " .. tostring(C.Skin.Weapon), function() end)
-        wb.MouseButton1Click:Connect(function()
+        Im.group(L, "step 2 - pick weapon (click)")
+        do
             local ws = Skins.Weapons()
-            if #ws == 0 then return end
-            local i = 1
-            for k, v in ipairs(ws) do if v == C.Skin.Weapon then i = k break end end
-            C.Skin.Weapon = ws[(i % #ws) + 1]
-            wb.Text = "weapon: " .. tostring(C.Skin.Weapon)
-        end)
-        local sb = Im.textbox(L, "skin name (exact)")
+            for i = 1, math.min(#ws, 10) do
+                local wname = ws[i]
+                local wb = Im.button(L, (wname == C.Skin.Weapon and "> " or "") .. wname, function()
+                    C.Skin.Weapon = wname
+                    buildPage("Skins")
+                end)
+                if wname == C.Skin.Weapon then wb.BackgroundColor3 = Im.ACC end
+            end
+            if #ws == 0 then
+                local h = Im.status(L, 30) h.Text = "weapons load after match start"
+            end
+        end
+        Im.group(R, "step 3 - pick skin (click = apply)")
+        do
+            local list = Skins.List(24)
+            if #list == 0 then
+                local h = Im.status(R, 40)
+                h.Text = "skin list appears when libs ready. or type name below."
+            end
+            for _, sname in ipairs(list) do
+                Im.button(R, sname, function()
+                    ensureSkins()
+                    C.Skin.Skin = sname
+                    C.Skin.Enabled = true
+                    Skins.Apply(C)
+                end)
+            end
+        end
+        Im.group(R, "manual (exact name)")
+        local sb = Im.textbox(R, "skin name (exact)")
         sb.FocusLost:Connect(function() C.Skin.Skin = sb.Text end)
-        local wb2 = Im.textbox(L, "wrap name (optional)")
-        wb2.FocusLost:Connect(function() C.Skin.Wrap = wb2.Text end)
-        Im.button(L, "APPLY", function()
-            C.Skin.Skin = sb.Text C.Skin.Wrap = wb2.Text
+        Im.button(R, "APPLY TYPED NAME", function()
+            ensureSkins()
+            C.Skin.Skin = sb.Text
+            C.Skin.Enabled = true
             Skins.Apply(C)
         end)
         Im.group(R, "status")
-        local st2 = Im.status(R, 80)
+        local st2 = Im.status(R, 60)
         st2.Text = "idle"
         task.spawn(function()
             while true do
                 task.wait(1)
-                pcall(function() st2.Text = "status: " .. C.Skin.Status end)
-                if not st2.Parent then break end
+                local ok = pcall(function() st2.Text = "weapon: " .. C.Skin.Weapon .. "\nstatus: " .. C.Skin.Status .. "\nafter apply: re-equip weapon (swap slot)" end)
+                if not ok or not st2.Parent then break end
             end
         end)
-        local h = Im.status(R, 60)
-        h.Text = "type exact skin name from locker. re-equip weapon after apply."
     elseif name == "Move" then
         Im.group(L, "movement")
         Im.checkbox(L, "speed", C.Move, "Speed")
@@ -219,13 +242,23 @@ if tabsBar then
     for _, n in ipairs(pages) do
         local b = Instance.new("TextButton")
         b.Size = UDim2.new(0, 72, 1, 0) b.BackgroundColor3 = Im.ROW
-        b.Text = n b.TextColor3 = Im.DIM b.Font = Enum.Font.Code b.TextSize = 11
+        b.BorderSizePixel = 0
+        b.Text = n b.TextColor3 = Im.DIM b.Font = Enum.Font.GothamBold b.TextSize = 11
         b.AutoButtonColor = false b.Parent = tabsBar
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
         tabBtns[n] = b
-        b.MouseButton1Click:Connect(function() cur = n paintTabs() buildPage(n) end)
+        b.MouseButton1Click:Connect(function()
+            cur = n paintTabs() buildPage(n)
+            if Im.paintCat then Im.paintCat(pages, cur, function(nn)
+                cur = nn paintTabs() buildPage(nn)
+            end) end
+        end)
     end
     paintTabs()
 end
+if Im.paintCat then Im.paintCat(pages, cur, function(nn)
+    cur = nn paintTabs() buildPage(nn)
+end) end
 buildPage(cur)
 
 getgenv().rivalspro = {cfg = C, Mods = Mods}

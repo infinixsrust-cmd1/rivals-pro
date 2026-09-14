@@ -7,6 +7,7 @@ assert(Common and Common.LP, "aimbot: Common not injected")
 local Aimbot = {}
 Aimbot.holding, Aimbot.toggled, Aimbot.target, Aimbot.targetName = false, false, nil, "none"
 Aimbot._lastPick, Aimbot._cached = 0, {nil, nil}
+Aimbot._visCache = {} -- part -> {t, ok} cuts raycasts (rivals perf)
 Aimbot.FOVc = Common.mkDraw("Circle", {Thickness=1.5, NumSides=64, Filled=false, Transparency=1})
 Aimbot.FOVdot = Common.mkDraw("Circle", {Radius=3, Filled=true, Transparency=1})
 
@@ -18,6 +19,25 @@ function Aimbot.valid(p, A)
     local ch = Common.charOf(p)
     if not ch then return false end
     return Common.partOf(ch, A.Part) ~= nil
+end
+
+function Aimbot.smartBone(ch, A)
+    -- better lock: Head first, fall back to Chest/HRP (fixes whiffs on R15 rigs)
+    if A.Part ~= "Random" then
+        local pt = Common.partOf(ch, A.Part)
+        if pt then return pt end
+    end
+    return Common.partOf(ch, "Head") or Common.partOf(ch, "Chest")
+        or ch:FindFirstChild("HumanoidRootPart")
+end
+
+function Aimbot.visCached(part)
+    local now = os.clock()
+    local e = Aimbot._visCache[part]
+    if e and (now - e.t) < 0.15 then return e.ok end
+    local ok = Common.visible(part)
+    Aimbot._visCache[part] = {t = now, ok = ok}
+    return ok
 end
 
 function Aimbot.pick(A)
@@ -33,12 +53,14 @@ function Aimbot.pick(A)
     Aimbot._lastPick = now
     local mp = Common.UIS:GetMouseLocation()
     if A.Sticky and Aimbot.target and Aimbot.valid(Aimbot.target, A) then
-        local pt = Common.partOf(Common.charOf(Aimbot.target), A.Part)
+        local pt = Aimbot.smartBone(Common.charOf(Aimbot.target), A)
         if pt then
             local sp, on = Common.toScreen(Common.predict(pt, A.Pred))
-            if on and (sp - mp).Magnitude < A.FOV then
-                if not (A.Wall and not Common.visible(pt)) then
+            -- hysteresis: sticky holds to 1.25x FOV so lock doesn't flicker
+            if on and (sp - mp).Magnitude < A.FOV * 1.25 then
+                if not (A.Wall and not Aimbot.visCached(pt)) then
                     Aimbot.targetName = Aimbot.target.Name
+                    Aimbot._cached = {Aimbot.target, pt}
                     return Aimbot.target, pt
                 end
             end
@@ -50,8 +72,8 @@ function Aimbot.pick(A)
     local best, bd, bp = nil, A.FOV, nil
     for _, p in ipairs(Common.Players:GetPlayers()) do
         if Aimbot.valid(p, A) then
-            local pt = Common.partOf(Common.charOf(p), A.Part)
-            if pt and not (A.Wall and not Common.visible(pt)) then
+            local pt = Aimbot.smartBone(Common.charOf(p), A)
+            if pt and not (A.Wall and not Aimbot.visCached(pt)) then
                 local sp, on = Common.toScreen(Common.predict(pt, A.Pred))
                 if on then
                     local d = (sp - mp).Magnitude

@@ -663,54 +663,33 @@ function Skin.start(C)
     if Skin.started then return end
     Skin.started = true
     task.spawn(function()
-        pcall(function()
+        local function set(s) C.Skin.Status = s end
+        local ok, err = pcall(function()
             local LP = Common.LP
-            C.Skin.Status = "searching libs..."
-            -- FAST non-blocking find (WaitForChild chain = 60s freeze if names differ)
-            local function fastFind(names)
-                -- names: array of path arrays, e.g. {{"Modules","CosmeticLibrary"}}
-                local t0 = os.clock()
-                while os.clock() - t0 < 4 do
-                    for _, path in ipairs(names) do
-                        local cur = game
-                        local okAll = true
-                        for _, n in ipairs(path) do
-                            if n == "PlayerScripts" then
-                                cur = LP and LP:FindFirstChild("PlayerScripts")
-                            elseif n == "Controllers" then
-                                cur = cur and cur:FindFirstChild("Controllers")
-                            else
-                                cur = cur and (cur:FindFirstChild(n))
-                            end
-                            if not cur then okAll = false break end
-                        end
-                        if okAll and cur then return cur, path end
-                    end
-                    -- deep fallback once per second: scan ReplicatedStorage
-                    local deep = Common.RSv:FindFirstChild(names[1][#names[1]], true)
-                    if deep then return deep, {"deep"} end
-                    task.wait(0.5)
+            set("searching libs...")
+            -- DIRECT paths only. No deep scans: game:FindFirstChild(x,true)
+            -- on Rivals hangs the thread for minutes. 6 quick tries max.
+            local cl, il, dc = nil, nil, nil
+            for _ = 1, 6 do
+                local mods = Common.RSv:FindFirstChild("Modules")
+                if mods then
+                    cl = cl or mods:FindFirstChild("CosmeticLibrary")
+                    il = il or mods:FindFirstChild("ItemLibrary")
                 end
-                return nil
-            end
-            local cl = fastFind({{"ReplicatedStorage","Modules","CosmeticLibrary"},{"Modules","CosmeticLibrary"}})
-            if not cl then
-                cl = Common.RSv:FindFirstChild("CosmeticLibrary", true)
-            end
-            local il = Common.RSv:FindFirstChild("ItemLibrary", true)
-            local dc = (LP:FindFirstChild("PlayerScripts") or {})
-            dc = dc and dc:FindFirstChild("Controllers", true)
-            dc = dc and dc:FindFirstChild("PlayerDataController")
-            if not dc then
-                -- controllers may live elsewhere; deep scan once
-                dc = game:FindFirstChild("PlayerDataController", true)
+                local ps = LP and LP:FindFirstChild("PlayerScripts")
+                local ct = ps and ps:FindFirstChild("Controllers")
+                dc = dc or (ct and ct:FindFirstChild("PlayerDataController"))
+                if cl and il and dc then break end
+                task.wait(0.5)
             end
             if not (cl and il and dc) then
-                C.Skin.Status = "libs not found (ilichq)"
+                set("libs not found: patch moved?")
                 return
             end
-            C.Skin.Status = "patching..."
-            local CLB, ILB, DCC = require(cl), require(il), require(dc)
+            set("patching...")
+            local CLB = require(cl)
+            local ILB = require(il)
+            local DCC = require(dc)
             Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
             -- SAFE MODE: only ownership patches (read-path). No viewmodel hooks,
             -- no namecall hooks, no replicate-on-equip. Those crashed Rivals.
@@ -776,8 +755,13 @@ function Skin.start(C)
                 end
             end)
             Skin.libs = true
-            C.Skin.Status = "unlocked: open locker"
+            set("unlocked: open locker")
         end)
+        if not ok then
+            set("ERR: " .. tostring(err):sub(1, 90))
+        end
+        -- reset started so user can retry the button
+        if not Skin.libs then Skin.started = false end
     end)
 end
 

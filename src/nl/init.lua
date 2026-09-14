@@ -205,6 +205,8 @@ local function safeBuild(n)
         end)
     end
 end
+
+local function clearCols()
     for _, c in ipairs({Im.left, Im.right}) do
         for _, w in ipairs(c:GetChildren()) do
             if not w:IsA("UIListLayout") and not w:IsA("UIPadding") then w:Destroy() end

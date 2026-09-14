@@ -2,31 +2,39 @@
 -- точка входа для executor: грузит все модули по порядку и стартует меню
 -- использование: открой Rivals, вставь содержимое loader.lua в executor, нажми Execute
 
-local BASE = getgenv().RIVALSPRO_BASE or "https://raw.githubusercontent.com/YOURNAME/rivals-pro/main/src"
+local BASE = getgenv().RIVALSPRO_BASE or "https://raw.githubusercontent.com/infinixsrust-cmd1/rivals-pro/main/src"
 
-local function loadModule(path)
+local function loadModule(path, ...)
     local url = BASE .. "/" .. path
-    local src = game:HttpGet(url)
+    local ok, src = pcall(game.HttpGet, game, url)
+    if not ok or not src or #src < 10 then
+        warn("[rivals.pro] http fail: " .. path .. " :: " .. tostring(src))
+        return nil
+    end
     local fn, err = loadstring(src)
     if not fn then
         warn("[rivals.pro] load fail: " .. path .. " :: " .. tostring(err))
         return nil
     end
-    return fn()
+    local ok2, mod = pcall(fn, ...)
+    if not ok2 then
+        warn("[rivals.pro] run fail: " .. path .. " :: " .. tostring(mod))
+        return nil
+    end
+    return mod
 end
 
 -- 1. ядро
 local Config   = loadModule("core/Config.lua")
 local Services = loadModule("core/Services.lua")
-local Utils    = loadModule("core/Utils.lua")
+local Utils    = loadModule("core/Utils.lua", Services)
 
 if not (Config and Services and Utils) then
-    warn("[rivals.pro] core failed to load, abort")
+    warn("[rivals.pro] core failed to load, abort (проверь raw-ссылки и HTTP в executor)")
     return
 end
 
--- Utils внутри себя делает loadstring Services — подменяем на уже загруженный
--- (костыль для executor без файловой системы; в локальной сборке см. build.py)
+-- дебаг: какой executor / есть ли Drawing / hook
 
 -- проверка игры
 if game.PlaceId ~= Config.GameId then

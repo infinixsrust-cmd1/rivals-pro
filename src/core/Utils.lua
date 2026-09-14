@@ -1,9 +1,10 @@
 -- rivals.pro | core/Utils
 -- общие хелперы: проверки, предикт, нотификации
 
-local Services = loadstring(game:HttpGet("https://raw.githubusercontent.com/placeholder/rivals.pro/main/src/core/Services.lua"))()
--- NOTE: при executor-запуске через loader.lua этот loadstring заменяется
--- на локальный require через getcustomasset/getgenv. См. loader.lua (BUNDLE_MODE).
+-- Utils получает Services через ... (передаётся из main.lua)
+-- порядок загрузки: Config -> Services -> Utils(Services)
+local Services = ...
+assert(Services and Services.Players, "[rivals.pro] Utils: Services not injected")
 
 local Utils = {}
 

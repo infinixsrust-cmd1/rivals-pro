@@ -252,16 +252,35 @@ local function buildPage(name)
             C.Skin.Enabled = true
             C.Skin.Status = "unlocking..."
         end)
-        Im.group(L, "how it works")
-        local h = Im.status(L, 90)
-        h.Text = "1. press UNLOCK ALL SKINS\n2. wait: status = unlocked\n3. open Weapons locker\n4. equip any skin (client-side)"
+        Im.group(L, "pick skin (click = wear)")
+        do
+            local list = Skins.List(24)
+            if #list == 0 then
+                local h = Im.status(L, 30)
+                h.Text = "list after unlock"
+            end
+            for _, sname in ipairs(list) do
+                Im.button(L, sname, function()
+                    Skins.Wear(C, sname)
+                end)
+            end
+        end
+        Im.group(R, "manual")
+        local sb = Im.textbox(R, "exact skin name")
+        Im.button(R, "WEAR TYPED", function()
+            Skins.Wear(C, sb.Text)
+        end)
         Im.group(R, "status")
-        local st2 = Im.status(R, 60)
+        local st2 = Im.status(R, 80)
         st2.Text = "idle"
         task.spawn(function()
             while true do
                 task.wait(1)
-                local ok = pcall(function() st2.Text = "status: " .. C.Skin.Status end)
+                local ok = pcall(function()
+                    st2.Text = "status: " .. C.Skin.Status
+                        .. "\nweapon: " .. C.Skin.Weapon
+                        .. "\nlocker locks stay: wear from HERE, then re-equip weapon"
+                end)
                 if not ok or not st2.Parent then break end
             end
         end)

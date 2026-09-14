@@ -702,9 +702,9 @@ function Skin.start(C)
                 return
             end
             Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
-            -- SAFE MODE: only ownership patches (read-path). No viewmodel hooks,
-            -- no namecall hooks, no replicate-on-equip. Those crashed Rivals.
-            -- Skins show via locker: game thinks you own everything.
+            -- SURGICAL: Owns* patches (safe, functions only) + GetWeaponData merge.
+            -- NO inventory proxies: returning `true` where game expects tables
+            -- spams "Missing description" x400 and breaks locker reads.
             pcall(function()
                 CLB.OwnsCosmeticNormally = function() return true end
                 CLB.OwnsCosmeticUniversally = function() return true end
@@ -733,40 +733,36 @@ function Skin.start(C)
                     return d
                 end
             end)
-            -- locker reads inventory via DataController:Get("CosmeticInventory"):
-            -- return all-true proxy so every skin shows as owned (read-path only)
+            -- EQUIP INTERCEPT (local visual only, server never sees it):
+            -- locker locks stay, but our Skins UI equips straight into viewmodel
+            -- data via GetWeaponData merge above. No viewmodel hooks, no replicate.
             pcall(function()
-                local oGet = DCC.Get
-                local proxy = setmetatable({}, {
-                    __index = function() return true end,
-                    __newindex = function() end,
-                })
-                DCC.Get = function(self, key)
-                    if key == "CosmeticInventory" then return proxy end
-                    return oGet(self, key)
-                end
-            end)
-            -- locker may read CurrentData.CosmeticInventory field directly:
-            -- metatable the REAL table so missing keys read as owned
-            task.spawn(function()
-                for _ = 1, 20 do
-                    local done = pcall(function()
-                        local cd = DCC.CurrentData
-                        local inv = cd and cd.CosmeticInventory
-                        if typeof(inv) == "table" and not Skin._invPatched then
-                            setmetatable(inv, {
-                                __index = function() return true end,
-                            })
-                            Skin._invPatched = true
+                local rem = Common.RSv:FindFirstChild("Remotes")
+                local dr = rem and rem:FindFirstChild("Data")
+                local eq = dr and dr:FindFirstChild("EquipCosmetic")
+                if eq and typeof(hookmetamethod) == "function" and not Skin._eqHook then
+                    Skin._eqHook = true
+                    local old
+                    old = hookmetamethod(game, "__namecall", function(self, ...)
+                        if getnamecallmethod() == "FireServer" and self == eq then
+                            local wpn, ctype, cname = ...
+                            if C.Skin.Enabled and cname and cname ~= ""
+                                and cname ~= "None" and cname ~= "RANDOM_COSMETIC" then
+                                local data = Skin.Clone(cname, ctype)
+                                if data then
+                                    Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+                                    Skin.equipped[wpn][ctype] = data
+                                    C.Skin.Status = "equipped " .. tostring(cname) .. " (local)"
+                                    return -- swallow: server keeps legit state
+                                end
+                            end
                         end
-                        return Skin._invPatched
+                        return old(self, ...)
                     end)
-                    if done and Skin._invPatched then break end
-                    task.wait(1)
                 end
             end)
             Skin.libs = true
-            set("unlocked: open locker")
+            set("unlocked: pick skin below")
         end)
         if not ok then
             set("ERR: " .. tostring(err):sub(1, 90))
@@ -774,6 +770,37 @@ function Skin.start(C)
         -- reset started so user can retry the button
         if not Skin.libs then Skin.started = false end
     end)
+end
+
+-- Wear: fires the game's own equip remote; our intercept stores it locally
+-- (server never sees it). Then re-equip the weapon in hand.
+function Skin.Wear(C, sname)
+    if not Skin.libs then
+        C.Skin.Status = "press UNLOCK first"
+        return
+    end
+    if not sname or sname == "" then
+        C.Skin.Status = "empty name"
+        return
+    end
+    C.Skin.Enabled = true
+    local data = Skin.Clone(sname, "Skin")
+    if not data then
+        C.Skin.Status = "not found: " .. tostring(sname)
+        return
+    end
+    local wpn = C.Skin.Weapon
+    Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+    Skin.equipped[wpn].Skin = data
+    C.Skin.Skin = sname
+    -- also tell the game (intercepted -> local only)
+    pcall(function()
+        local rem = Common.RSv:FindFirstChild("Remotes")
+        local dr = rem and rem:FindFirstChild("Data")
+        local eq = dr and dr:FindFirstChild("EquipCosmetic")
+        if eq then eq:FireServer(wpn, "Skin", sname, {}) end
+    end)
+    C.Skin.Status = "wearing " .. sname .. " (re-equip " .. wpn .. ")"
 end
 
 return Skin

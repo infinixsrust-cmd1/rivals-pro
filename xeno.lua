@@ -366,30 +366,45 @@ RS.RenderStepped:Connect(function()
     end
 end)
 
--- ============ GUNMODS ============
+-- ============ GUNMODS (throttled: cached module list, budget per tick) ============
+local gunCache = nil
+local gunCacheAt = 0
 task.spawn(function()
     while true do
-        task.wait(2.5)
+        task.wait(8)
         pcall(function()
             local G = C.Gun
-            if not (G.NoRecoil or G.NoSpread or G.Rapid or G.InfAmmo) then return end
-            for _, o in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-                if o:IsA("ModuleScript") then
-                    local ok, t = pcall(require, o)
-                    if ok and typeof(t) == "table" then
-                        if G.NoRecoil then
-                            if t.Recoil ~= nil then t.Recoil = 0 end
-                            for _, k in ipairs({"RecoilX","RecoilY","CameraKick","Kickback"}) do
-                                if t[k] ~= nil then t[k] = 0 end
-                            end
-                        end
-                        if G.NoSpread and t.Spread ~= nil then t.Spread = 0 end
-                        if G.Rapid and typeof(t.FireRate) == "number" and not t._rp then
-                            t.FireRate = t.FireRate * C.Gun.RapidX t._rp = true
-                        end
-                        if G.InfAmmo and t.Ammo ~= nil then t.Ammo = 999 end
+            if not (G.NoRecoil or G.NoSpread or G.Rapid or G.InfAmmo or G.Reload) then return end
+            local now = os.clock()
+            if not gunCache or (now - gunCacheAt) > 60 then
+                gunCache = {}
+                for _, o in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+                    if o:IsA("ModuleScript") then
+                        gunCache[#gunCache+1] = o
+                        if #gunCache > 600 then break end
                     end
                 end
+                gunCacheAt = now
+            end
+            local budget = 40
+            for _, o in ipairs(gunCache) do
+                if budget <= 0 then break end
+                budget = budget - 1
+                local ok, t = pcall(require, o)
+                if ok and typeof(t) == "table" then
+                    if G.NoRecoil then
+                        if t.Recoil ~= nil then t.Recoil = 0 end
+                        for _, k in ipairs({"RecoilX","RecoilY","CameraKick","Kickback"}) do
+                            if t[k] ~= nil then t[k] = 0 end
+                        end
+                    end
+                    if G.NoSpread and t.Spread ~= nil then t.Spread = 0 end
+                    if G.Rapid and typeof(t.FireRate) == "number" and not t._rp then
+                        t.FireRate = t.FireRate * C.Gun.RapidX t._rp = true
+                    end
+                    if G.InfAmmo and t.Ammo ~= nil then t.Ammo = 999 end
+                end
+                if budget % 10 == 0 then task.wait() end
             end
             if G.Reload then
                 local ch = charOf(LP)
@@ -965,12 +980,17 @@ UIS.InputBegan:Connect(function(i, g)
     if i.KeyCode == Enum.KeyCode.RightShift then win.Visible = not win.Visible end
 end)
 
--- live status
+-- live status (fps via delta, no frame stall)
 task.spawn(function()
+    local last = os.clock() local frames = 0 local fps = 60
+    RS.RenderStepped:Connect(function() frames = frames + 1 end)
     while true do
-        task.wait(0.25)
+        task.wait(0.5)
         pcall(function()
-            local fps = math.floor(1 / math.max(RS.RenderStepped:Wait(), 1e-4))
+            local now = os.clock()
+            local el = now - last
+            if el > 0 then fps = math.floor(frames / el + 0.5) end
+            frames, last = 0, now
             st.Text = "target: " .. targetName .. "  |  " .. tostring(fps) .. " fps"
         end)
     end
@@ -986,10 +1006,15 @@ do
     Instance.new("UICorner", wm).CornerRadius = UDim.new(0, 5)
     local wms = Instance.new("UIStroke", wm) wms.Color = ACC wms.Thickness = 1
     task.spawn(function()
+        local last = os.clock() local frames = 0
+        RS.RenderStepped:Connect(function() frames = frames + 1 end)
         while true do
-            task.wait(0.5)
+            task.wait(1)
             pcall(function()
-                local fps = math.floor(1 / math.max(RS.RenderStepped:Wait(), 1e-4))
+                local now = os.clock()
+                local el = now - last
+                local fps = el > 0 and math.floor(frames / el + 0.5) or 60
+                frames, last = 0, now
                 wm.Text = "  rivals.pro  |  " .. tostring(fps) .. " fps  |  " .. targetName
             end)
         end

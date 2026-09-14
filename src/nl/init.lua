@@ -67,6 +67,7 @@ local C = {
         Team=true, MaxD=2000, Color=Color3.fromRGB(90,140,255)},
     Gun = {NoRecoil=false, NoSpread=false, Rapid=false, RapidX=2, InfAmmo=false, Reload=false},
     Move = {Speed=false, SpeedV=24, Fly=false, FlyV=50, Noclip=false, InfJump=false, Knock=false},
+    Trig = {Enabled=false, Key=nil, Dist=500, Delay=60, Team=true},
     Misc = {NoShake=true, Bright=false, AFK=true},
     Skin = {Enabled=false, Weapon="Assault Rifle", Skin="", Wrap="", Status="idle"},
 }
@@ -142,9 +143,11 @@ prog(0.86, "skins...")
 local Skins = loadModule("skins.lua", Common)
 prog(0.93, "finishing...")
 local Misc = loadModule("misc.lua", Common)
+prog(0.94, "trigger...")
+local Trig = loadModule("trigger.lua", Common)
 prog(0.95, "config...")
 local Cfg = loadModule("cfg.lua", Common)
-if not (Aimbot and ESP and Move and Misc) then
+if not (Aimbot and ESP and Move and Misc and Trig) then
     pcall(function() splashTxt.Text = "ERR: modules" end)
     warn("[nl] modules failed") return
 end
@@ -156,6 +159,7 @@ Aimbot.start(C)
 ESP.start(C)
 Move.start(C)
 Misc.start(C)
+Trig.start(C)
 local lazy = {silent=false, gun=false, skins=false}
 local function ensureSilent()
     if lazy.silent then return end
@@ -256,6 +260,11 @@ local function buildPage(name)
         Im.group(R, "ammo")
         Im.checkbox(R, "infinite ammo", C.Gun, "InfAmmo", function(v) if v then ensureGun() end end)
         Im.checkbox(R, "instant reload", C.Gun, "Reload", function(v) if v then ensureGun() end end)
+        Im.group(R, "triggerbot")
+        Im.checkbox(R, "triggerbot", C.Trig, "Enabled")
+        Im.slider(R, "delay ms", C.Trig, "Delay", 0, 300, 10)
+        Im.slider(R, "range", C.Trig, "Dist", 50, 2000, 50)
+        Im.checkbox(R, "team check", C.Trig, "Team")
     elseif name == "Skins" then
         Im.group(L, "unlock all")
         Im.button(L, "UNLOCK ALL SKINS", function()

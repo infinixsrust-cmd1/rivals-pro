@@ -9,7 +9,7 @@ local BASE = getgenv().RIVALSPRO_BASE or "https://raw.githubusercontent.com/infi
 local Bundle = {}
 local function loadBundle()
     -- cachebuster: executor/CDN cache stale bundles otherwise
-    local url = BASE .. "/nl_bundle.txt?x=" .. tostring(os.time())
+    local url = BASE .. "/nl_bundle_v2.txt?x=" .. tostring(os.time())
     local ok, src = pcall(game.HttpGet, game, url)
     if not ok or not src or #src < 1000 then
         return false, "bundle http fail (" .. tostring(src):sub(1, 80) .. ")"

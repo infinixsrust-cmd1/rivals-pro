@@ -1,0 +1,1561 @@
+--@@FILE:common.lua
+-- rivals.pro NL | modules/common.lua
+-- shared context: services + helpers (ASCII only)
+-- loaded as: local Common = loadModule("nl/modules/common.lua")()
+
+local Common = {}
+
+Common.Players = game:GetService("Players")
+Common.RS = game:GetService("RunService")
+Common.UIS = game:GetService("UserInputService")
+Common.Lighting = game:GetService("Lighting")
+Common.StarterGui = game:GetService("StarterGui")
+Common.RSv = game:GetService("ReplicatedStorage")
+Common.LP = Common.Players.LocalPlayer
+
+function Common.cam() return workspace.CurrentCamera end
+
+function Common.notify(t, s)
+    pcall(function()
+        Common.StarterGui:SetCore("SendNotification", {Title = t, Text = s, Duration = 4})
+    end)
+end
+
+function Common.charOf(p) return p and p.Character end
+function Common.humOf(p)
+    local ch = Common.charOf(p)
+    return ch and ch:FindFirstChildOfClass("Humanoid")
+end
+function Common.rootOf(p)
+    local ch = Common.charOf(p)
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+function Common.alive(p)
+    local h = Common.humOf(p)
+    return h ~= nil and h.Health > 0
+end
+function Common.shielded(p)
+    local ch = Common.charOf(p)
+    return ch and ch:FindFirstChildOfClass("ForceField") ~= nil
+end
+function Common.teammate(p)
+    local LP = Common.LP
+    if not (p and LP) or p == LP then return p == LP end
+    local ok, t = pcall(function() return p.Team end)
+    if not ok or t == nil then return false end
+    local ok2, mine = pcall(function() return LP.Team end)
+    if not ok2 or mine == nil then return false end
+    return t == mine
+end
+function Common.partOf(ch, name)
+    if not ch then return nil end
+    if name == "Head" then
+        return ch:FindFirstChild("Head") or ch:FindFirstChild("HumanoidRootPart")
+    elseif name == "Chest" then
+        return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
+            or ch:FindFirstChild("HumanoidRootPart")
+    elseif name == "Legs" then
+        return ch:FindFirstChild("LowerTorso") or ch:FindFirstChild("HumanoidRootPart")
+    elseif name == "Random" then
+        local pool = {}
+        for _, n in ipairs({"Head","UpperTorso","HumanoidRootPart","LowerTorso"}) do
+            local pt = ch:FindFirstChild(n)
+            if pt then pool[#pool+1] = pt end
+        end
+        if #pool == 0 then return nil end
+        return pool[math.random(1, #pool)]
+    end
+    return ch:FindFirstChild("HumanoidRootPart")
+end
+function Common.visible(part)
+    if not part then return false end
+    local c = Common.cam()
+    if not c then return false end
+    local myCh = Common.charOf(Common.LP)
+    local org = c.CFrame.Position
+    local dir = part.Position - org
+    if dir.Magnitude < 1 then return true end
+    local pr = RaycastParams.new()
+    pr.FilterType = Enum.RaycastFilterType.Exclude
+    local filt = {c}
+    if myCh then filt[#filt+1] = myCh end
+    if part.Parent then filt[#filt+1] = part.Parent end
+    pr.FilterDescendantsInstances = filt
+    pr.IgnoreWater = true
+    local ok, r = pcall(function() return workspace:Raycast(org, dir, pr) end)
+    if not ok or not r then return true end
+    return (r.Position - part.Position).Magnitude < 5
+end
+function Common.predict(part, k)
+    local ok, v = pcall(function() return part.Velocity end)
+    if not ok or typeof(v) ~= "Vector3" then return part.Position end
+    if v.Magnitude > 200 then return part.Position end
+    return part.Position + v * math.clamp(k or 0, 0, 0.3)
+end
+function Common.toScreen(pos)
+    local c = Common.cam()
+    if not c then return Vector2.new(0,0), false end
+    local v, on = c:WorldToViewportPoint(pos)
+    return Vector2.new(v.X, v.Y), on
+end
+function Common.mkDraw(cls, props)
+    local ok, d = pcall(function() return Drawing.new(cls) end)
+    if not ok or not d then return nil end
+    for k, v in pairs(props) do pcall(function() d[k] = v end) end
+    d.Visible = false
+    getgenv()._rp_draw = getgenv()._rp_draw or {}
+    getgenv()._rp_draw[#getgenv()._rp_draw+1] = d
+    return d
+end
+
+return Common
+
+--@@END
+--@@FILE:aimbot.lua
+-- rivals.pro NL | modules/aimbot.lua (dedicated file)
+-- usage: local Aimbot = loadModule("nl/modules/aimbot.lua")(Common, C)
+
+local Common = ...
+assert(Common and Common.LP, "aimbot: Common not injected")
+
+local Aimbot = {}
+Aimbot.holding, Aimbot.toggled, Aimbot.target, Aimbot.targetName = false, false, nil, "none"
+Aimbot._lastPick, Aimbot._cached = 0, {nil, nil}
+Aimbot._visCache = {} -- part -> {t, ok} cuts raycasts (rivals perf)
+Aimbot.FOVc = Common.mkDraw("Circle", {Thickness=1.5, NumSides=64, Filled=false, Transparency=1})
+Aimbot.FOVdot = Common.mkDraw("Circle", {Radius=3, Filled=true, Transparency=1})
+
+function Aimbot.valid(p, A)
+    if p == Common.LP then return false end
+    if A.Team and Common.teammate(p) then return false end
+    if A.Dead and not Common.alive(p) then return false end
+    if Common.shielded(p) then return false end
+    local ch = Common.charOf(p)
+    if not ch then return false end
+    return Common.partOf(ch, A.Part) ~= nil
+end
+
+function Aimbot.smartBone(ch, A)
+    -- better lock: Head first, fall back to Chest/HRP (fixes whiffs on R15 rigs)
+    if A.Part ~= "Random" then
+        local pt = Common.partOf(ch, A.Part)
+        if pt then return pt end
+    end
+    return Common.partOf(ch, "Head") or Common.partOf(ch, "Chest")
+        or ch:FindFirstChild("HumanoidRootPart")
+end
+
+function Aimbot.visCached(part)
+    local now = os.clock()
+    local e = Aimbot._visCache[part]
+    if e and (now - e.t) < 0.15 then return e.ok end
+    local ok = Common.visible(part)
+    Aimbot._visCache[part] = {t = now, ok = ok}
+    return ok
+end
+
+function Aimbot.pick(A)
+    -- throttle full scans to ~30Hz; reuse cache between (Rivals perf)
+    local now = os.clock()
+    if now - Aimbot._lastPick < 0.033 and Aimbot._cached[1] ~= nil then
+        -- still validate sticky cheaply
+        local cp, cpt = Aimbot._cached[1], Aimbot._cached[2]
+        if cp and cpt and cpt.Parent then
+            return cp, cpt
+        end
+    end
+    Aimbot._lastPick = now
+    local mp = Common.UIS:GetMouseLocation()
+    if A.Sticky and Aimbot.target and Aimbot.valid(Aimbot.target, A) then
+        local pt = Aimbot.smartBone(Common.charOf(Aimbot.target), A)
+        if pt then
+            local sp, on = Common.toScreen(Common.predict(pt, A.Pred))
+            -- hysteresis: sticky holds to 1.25x FOV so lock doesn't flicker
+            if on and (sp - mp).Magnitude < A.FOV * 1.25 then
+                if not (A.Wall and not Aimbot.visCached(pt)) then
+                    Aimbot.targetName = Aimbot.target.Name
+                    Aimbot._cached = {Aimbot.target, pt}
+                    return Aimbot.target, pt
+                end
+            end
+        end
+        Aimbot.target, Aimbot.targetName = nil, "none"
+    else
+        Aimbot.target = nil
+    end
+    local best, bd, bp = nil, A.FOV, nil
+    for _, p in ipairs(Common.Players:GetPlayers()) do
+        if Aimbot.valid(p, A) then
+            local pt = Aimbot.smartBone(Common.charOf(p), A)
+            if pt and not (A.Wall and not Aimbot.visCached(pt)) then
+                local sp, on = Common.toScreen(Common.predict(pt, A.Pred))
+                if on then
+                    local d = (sp - mp).Magnitude
+                    if d < bd then best, bd, bp = p, d, pt end
+                end
+            end
+        end
+    end
+    Aimbot.target = best
+    Aimbot.targetName = best and best.Name or "none"
+    Aimbot._cached = {best, bp}
+    return best, bp
+end
+
+function Aimbot.start(C)
+    local A = C.Aim
+    Common.UIS.InputBegan:Connect(function(i, g)
+        if g then return end
+        if i.KeyCode == A.Key or i.UserInputType == Enum.UserInputType.MouseButton2 then
+            if A.Mode == "Toggle" then Aimbot.toggled = not Aimbot.toggled
+            else Aimbot.holding = true end
+        end
+    end)
+    Common.UIS.InputEnded:Connect(function(i)
+        if i.KeyCode == A.Key or i.UserInputType == Enum.UserInputType.MouseButton2 then
+            Aimbot.holding = false
+        end
+    end)
+    Common.RS.RenderStepped:Connect(function(dt)
+        local ok, err = pcall(function()
+        if Aimbot.FOVc then
+            local show = A.Enabled and A.ShowFOV
+            Aimbot.FOVc.Visible = show and true or false
+            if show then
+                Aimbot.FOVc.Position = Common.UIS:GetMouseLocation()
+                Aimbot.FOVc.Radius = A.FOV
+                Aimbot.FOVc.Color = (Aimbot.targetName ~= "none")
+                    and Color3.fromRGB(255,0,60) or Color3.fromRGB(255,255,255)
+            end
+        end
+        local on = A.Enabled and ((A.Mode == "Toggle" and Aimbot.toggled)
+            or Aimbot.holding or Common.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2))
+        if not on then
+            Aimbot.target, Aimbot.targetName = nil, "none"
+            if Aimbot.FOVdot then Aimbot.FOVdot.Visible = false end
+            return
+        end
+        local _, pt = Aimbot.pick(A)
+        if Aimbot.FOVdot then
+            if A.Dot and pt then
+                local sp, os = Common.toScreen(pt.Position)
+                Aimbot.FOVdot.Visible = os
+                if os then Aimbot.FOVdot.Position = sp Aimbot.FOVdot.Color = Color3.fromRGB(255,0,60) end
+            else
+                Aimbot.FOVdot.Visible = false
+            end
+        end
+        if not pt then return end
+        local c = Common.cam()
+        if not c then return end
+        -- AIMLOCK: hard snap, no smoothing — glued to the bone
+        if A.Lock then
+            if A.FP and typeof(mousemoverel) == "function" then
+                local mp = Common.UIS:GetMouseLocation()
+                local sp = Common.toScreen(Common.predict(pt, A.Pred))
+                local dx, dy = sp.X - mp.X, sp.Y - mp.Y
+                if math.abs(dx) > 0 or math.abs(dy) > 0 then
+                    pcall(mousemoverel, dx, dy)
+                end
+                return
+            end
+            c.CFrame = CFrame.new(c.CFrame.Position, Common.predict(pt, A.Pred))
+            return
+        end
+        -- FIRST PERSON FIX: game owns the camera in FP, CFrame fights it.
+        -- mousemoverel moves the real mouse -> camera follows naturally.
+        if A.FP and typeof(mousemoverel) == "function" then
+            local mp = Common.UIS:GetMouseLocation()
+            local sp = Common.toScreen(Common.predict(pt, A.Pred))
+            local dx, dy = sp.X - mp.X, sp.Y - mp.Y
+            -- deadzone 1px stops jitter; gain scaled by Smooth (invert: high smooth = small steps)
+            if math.abs(dx) > 1 or math.abs(dy) > 1 then
+                local k = math.clamp(12 / math.max(A.Smooth, 1), 0.4, 6)
+                pcall(mousemoverel, dx * 0.5 * k, dy * 0.5 * k)
+            end
+            return
+        end
+        local goal = CFrame.new(c.CFrame.Position, Common.predict(pt, A.Pred))
+        local s = math.clamp(A.Smooth, 1, 20)
+        local alpha = math.clamp(1 - math.exp(-dt * (30 / s) * 2), 0.02, 1)
+        c.CFrame = c.CFrame:Lerp(goal, alpha)
+        end)
+        if not ok then
+            Aimbot._err = (Aimbot._err or 0) + 1
+            if Aimbot._err < 5 then warn("[nl] aim frame: " .. tostring(err)) end
+        end
+    end)
+end
+
+return Aimbot
+
+--@@END
+--@@FILE:silent.lua
+-- rivals.pro NL | modules/silent.lua (dedicated file)
+-- usage: local Silent = loadModule("nl/modules/silent.lua")(Common, C)
+
+local Common = ...
+assert(Common and Common.LP, "silent: Common not injected")
+
+local Silent = {started = false}
+
+function Silent.start(C)
+    if Silent.started then return true end
+    if typeof(hookmetamethod) ~= "function" or typeof(getnamecallmethod) ~= "function" then
+        return false, "no hookmetamethod"
+    end
+    Silent.started = true
+    local S = C.Silent
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        local m = getnamecallmethod()
+        if S.Enabled and (m == "FireServer" or m == "InvokeServer") then
+            local okN, nm = pcall(function() return tostring(self.Name) end)
+            local n = okN and string.lower(nm) or ""
+            if string.find(n, "shoot") or string.find(n, "fire") or string.find(n, "bullet") then
+                if math.random(1, 100) <= S.Hit then
+                    local mp = Common.UIS:GetMouseLocation()
+                    local bp2, bd2 = nil, 420
+                    local myR = Common.rootOf(Common.LP)
+                    for _, p in ipairs(Common.Players:GetPlayers()) do
+                        if p ~= Common.LP and Common.alive(p) and not Common.shielded(p)
+                            and not (S.Team and Common.teammate(p)) then
+                            local ch = Common.charOf(p)
+                            local pt = ch and (ch:FindFirstChild(S.Part) or ch:FindFirstChild("Head"))
+                            if pt then
+                                local skip = false
+                                if myR and (myR.Position - pt.Position).Magnitude > S.Dist then skip = true end
+                                if not skip and S.Wall and not Common.visible(pt) then skip = true end
+                                if not skip then
+                                    local sp, on = Common.toScreen(pt.Position)
+                                    if on then
+                                        local d = (sp - mp).Magnitude
+                                        if d < bd2 then bp2, bd2 = pt, d end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if bp2 then
+                        local args = {...}
+                        local pr2 = Common.predict(bp2, 0.12)
+                        for i, v in ipairs(args) do
+                            if typeof(v) == "Vector3" then args[i] = pr2
+                            elseif typeof(v) == "CFrame" then args[i] = CFrame.new(pr2) end
+                        end
+                        return old(self, unpack(args))
+                    end
+                end
+            end
+        end
+        return old(self, ...)
+    end)
+    return true
+end
+
+return Silent
+
+--@@END
+--@@FILE:esp.lua
+-- rivals.pro NL | modules/esp.lua (dedicated file)
+
+local Common = ...
+assert(Common and Common.LP, "esp: Common not injected")
+
+local ESP = {objs = {}}
+
+function ESP.get(p)
+    if ESP.objs[p] then return ESP.objs[p] end
+    local box = Common.mkDraw("Square", {Thickness=1.5, Filled=false, Transparency=1})
+    local hp = Common.mkDraw("Square", {Filled=true, Transparency=1})
+    local nm = Common.mkDraw("Text", {Size=13, Center=true, Outline=true, Transparency=1})
+    local ds = Common.mkDraw("Text", {Size=12, Center=true, Outline=true, Transparency=1})
+    local tr = Common.mkDraw("Line", {Thickness=1.5, Transparency=0.9})
+    if not (box and hp and nm and ds and tr) then return nil end
+    ESP.objs[p] = {box=box, hp=hp, nm=nm, ds=ds, tr=tr}
+    return ESP.objs[p]
+end
+
+function ESP.start(C)
+    local E = C.ESP
+    Common.Players.PlayerRemoving:Connect(function(p)
+        local s = ESP.objs[p]
+        if s then for _, d in pairs(s) do pcall(function() d.Visible = false end) end ESP.objs[p] = nil end
+    end)
+    Common.RS.RenderStepped:Connect(function()
+        local ok, err = pcall(function()
+        for _, p in ipairs(Common.Players:GetPlayers()) do
+            local s = ESP.get(p)
+            if not s then continue end
+            local show = E.Enabled and p ~= Common.LP and Common.alive(p)
+                and not Common.shielded(p) and not (E.Team and Common.teammate(p))
+            local ch = Common.charOf(p)
+            local rt = ch and ch:FindFirstChild("HumanoidRootPart")
+            local hd = ch and ch:FindFirstChild("Head")
+            if show and (not rt or not hd) then show = false end
+            local myR = Common.rootOf(Common.LP)
+            local dd = (myR and rt) and (myR.Position - rt.Position).Magnitude or 0
+            if show and dd > E.MaxD then show = false end
+            if not show then
+                for _, d in pairs(s) do d.Visible = false end
+                continue
+            end
+            local c = Common.cam()
+            local tv, ton = c:WorldToViewportPoint(hd.Position + Vector3.new(0, 0.7, 0))
+            local bv, bon = c:WorldToViewportPoint(rt.Position - Vector3.new(0, 3, 0))
+            if not (ton and bon) then
+                for _, d in pairs(s) do d.Visible = false end
+                continue
+            end
+            local h = math.abs(bv.Y - tv.Y)
+            if h < 4 or h > 2500 then
+                for _, d in pairs(s) do d.Visible = false end
+                continue
+            end
+            local w, x, y = h * 0.55, tv.X - (h * 0.55) / 2, tv.Y
+            s.box.Visible = E.Box
+            if E.Box then
+                s.box.Size = Vector2.new(w, h) s.box.Position = Vector2.new(x, y)
+                s.box.Color = E.Color
+            end
+            local hu = Common.humOf(p)
+            local fr = hu and math.clamp(hu.Health / math.max(hu.MaxHealth, 1), 0, 1) or 1
+            s.hp.Visible = E.HP
+            if E.HP then
+                local fh = h * fr
+                s.hp.Size = Vector2.new(3, fh)
+                s.hp.Position = Vector2.new(x - 6, y + (h - fh))
+                s.hp.Color = Color3.fromRGB(255 - math.floor(255 * fr), math.floor(255 * fr), 0)
+            end
+            s.nm.Visible = E.Name
+            if E.Name then
+                s.nm.Text = p.Name s.nm.Position = Vector2.new(tv.X, y - 16)
+                s.nm.Color = Color3.new(1, 1, 1)
+            end
+            s.ds.Visible = E.Dist
+            if E.Dist then
+                s.ds.Text = "[" .. math.floor(dd) .. "m]"
+                s.ds.Position = Vector2.new(tv.X, y + h + 1)
+                s.ds.Color = Color3.new(1, 1, 1)
+            end
+            s.tr.Visible = E.Tracer
+            if E.Tracer then
+                s.tr.From = Vector2.new(c.ViewportSize.X / 2, c.ViewportSize.Y)
+                s.tr.To = Vector2.new(tv.X, y + h / 2)
+                s.tr.Color = E.Color
+            end
+        end
+        end)
+        if not ok then
+            ESP._err = (ESP._err or 0) + 1
+            if ESP._err < 5 then warn("[nl] esp frame: " .. tostring(err)) end
+        end
+    end)
+end
+
+return ESP
+
+--@@END
+--@@FILE:gunmods.lua
+-- rivals.pro NL | modules/gunmods.lua (dedicated file, throttled)
+
+local Common = ...
+assert(Common and Common.LP, "gunmods: Common not injected")
+
+local Gun = {cache = nil, cacheAt = 0, started = false}
+
+function Gun.start(C)
+    if Gun.started then return end
+    Gun.started = true
+    task.spawn(function()
+        while true do
+            task.wait(8)
+            pcall(function()
+                local G = C.Gun
+                if not (G.NoRecoil or G.NoSpread or G.Rapid or G.InfAmmo or G.Reload) then return end
+                local now = os.clock()
+                if not Gun.cache or (now - Gun.cacheAt) > 60 then
+                    Gun.cache = {}
+                    for _, o in ipairs(Common.RSv:GetDescendants()) do
+                        if o:IsA("ModuleScript") then
+                            Gun.cache[#Gun.cache+1] = o
+                            if #Gun.cache > 600 then break end
+                        end
+                    end
+                    Gun.cacheAt = now
+                end
+                local budget = 40
+                for _, o in ipairs(Gun.cache) do
+                    if budget <= 0 then break end
+                    budget = budget - 1
+                    local ok, t = pcall(require, o)
+                    if ok and typeof(t) == "table" then
+                        if G.NoRecoil then
+                            if t.Recoil ~= nil then t.Recoil = 0 end
+                            for _, k in ipairs({"RecoilX","RecoilY","CameraKick","Kickback"}) do
+                                if t[k] ~= nil then t[k] = 0 end
+                            end
+                        end
+                        if G.NoSpread and t.Spread ~= nil then t.Spread = 0 end
+                        if G.Rapid and typeof(t.FireRate) == "number" and not t._rp then
+                            t.FireRate = t.FireRate * G.RapidX t._rp = true
+                        end
+                        if G.InfAmmo and t.Ammo ~= nil then t.Ammo = 999 end
+                    end
+                    if budget % 10 == 0 then task.wait() end
+                end
+                if G.Reload then
+                    local ch = Common.charOf(Common.LP)
+                    if ch then
+                        for _, v in ipairs(ch:GetDescendants()) do
+                            if v:IsA("NumberValue") and string.lower(v.Name) == "reloadtime" then
+                                v.Value = 0.01
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+return Gun
+
+--@@END
+--@@FILE:movement.lua
+-- rivals.pro NL | modules/movement.lua (dedicated file: speed/fly/noclip/jump/knock)
+-- fly rewritten: survives respawn, no error spam (BodyVelocity locked-parent fix)
+
+local Common = ...
+assert(Common and Common.LP, "movement: Common not injected")
+
+local Move = {flyConn = nil, flyOn = false, fail = 0}
+
+local function flyOff()
+    Move.flyOn = false
+    if Move.flyConn then
+        pcall(function() Move.flyConn:Disconnect() end)
+        Move.flyConn = nil
+    end
+    -- destroy physics movers wherever they live now
+    pcall(function()
+        local ch = Common.charOf(Common.LP)
+        if ch then
+            for _, o in ipairs(ch:GetDescendants()) do
+                if o.Name == "rp_fly_bv" or o.Name == "rp_fly_bg" then
+                    pcall(function() o:Destroy() end)
+                end
+            end
+        end
+    end)
+    Move.fail = 0
+end
+
+local function flyEnsure(r)
+    -- find alive movers under current root, else create fresh (no stale refs)
+    local bv, bg = nil, nil
+    pcall(function()
+        bv = r:FindFirstChild("rp_fly_bv")
+        bg = r:FindFirstChild("rp_fly_bg")
+    end)
+    if not (bv and bg and bv.Parent and bg.Parent) then
+        pcall(function() if bv then bv:Destroy() end end)
+        pcall(function() if bg then bg:Destroy() end end)
+        bv = Instance.new("BodyVelocity")
+        bv.Name = "rp_fly_bv"
+        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        bv.Velocity = Vector3.zero
+        bg = Instance.new("BodyGyro")
+        bg.Name = "rp_fly_bg"
+        bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        -- parent IMMEDIATELY (never leave parentless across frames)
+        bv.Parent = r
+        bg.Parent = r
+    end
+    return bv, bg
+end
+
+function Move.start(C)
+    local M = C.Move
+    Common.RS.Heartbeat:Connect(function()
+        pcall(function()
+            if M.Speed then
+                local h = Common.humOf(Common.LP)
+                if h and h.Health > 0 then h.WalkSpeed = M.SpeedV end
+            end
+            if M.Knock then
+                local r = Common.rootOf(Common.LP)
+                if r then
+                    local v = r.AssemblyLinearVelocity
+                    if v.Magnitude > 60 then
+                        r.AssemblyLinearVelocity = Vector3.new(math.clamp(v.X,-30,30), v.Y, math.clamp(v.Z,-30,30))
+                    end
+                end
+            end
+        end)
+    end)
+    Common.RS.Stepped:Connect(function()
+        pcall(function()
+            if M.Noclip then
+                local ch = Common.charOf(Common.LP)
+                if ch then
+                    for _, pt in ipairs(ch:GetDescendants()) do
+                        if pt:IsA("BasePart") then pt.CanCollide = false end
+                    end
+                end
+            end
+        end)
+    end)
+    Common.UIS.InputBegan:Connect(function(i, g)
+        pcall(function()
+            if g then return end
+            if i.KeyCode == Enum.KeyCode.Space and M.InfJump then
+                local h = Common.humOf(Common.LP)
+                if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+            end
+            if i.KeyCode == Enum.KeyCode.F and M.Fly then
+                Move.flyOn = not Move.flyOn
+                if Move.flyOn then
+                    Move.fail = 0
+                    if Move.flyConn then pcall(function() Move.flyConn:Disconnect() end) end
+                    Move.flyConn = Common.RS.Heartbeat:Connect(function()
+                        local ok = pcall(function()
+                            if not Move.flyOn then return end
+                            local r = Common.rootOf(Common.LP)
+                            local c = Common.cam()
+                            if not r or not c then return end
+                            local bv, bg = flyEnsure(r)
+                            if not (bv and bg) then return end
+                            bg.CFrame = c.CFrame
+                            local d = Vector3.zero
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.W) then d = d + c.CFrame.LookVector end
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.S) then d = d - c.CFrame.LookVector end
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.D) then d = d + c.CFrame.RightVector end
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.A) then d = d - c.CFrame.RightVector end
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0, 1, 0) end
+                            if Common.UIS:IsKeyDown(Enum.KeyCode.LeftShift) then d = d - Vector3.new(0, 1, 0) end
+                            bv.Velocity = d.Magnitude > 0 and (d.Unit * M.FlyV) or Vector3.zero
+                        end)
+                        if not ok then
+                            Move.fail = Move.fail + 1
+                            if Move.fail > 10 then flyOff() end
+                        else
+                            Move.fail = 0
+                        end
+                    end)
+                else
+                    flyOff()
+                end
+            end
+        end)
+    end)
+    -- auto-off on respawn (fresh character = fresh physics)
+    pcall(function()
+        Common.LP.CharacterAdded:Connect(function()
+            if Move.flyOn then
+                task.wait(1)
+            end
+        end)
+    end)
+end
+
+return Move
+
+--@@END
+--@@FILE:skins.lua
+-- rivals.pro NL | modules/skins.lua (dedicated file)
+-- technique: CosmeticLibrary ownership patch + viewmodel inject (cf. Mandog23/voldstrap)
+
+local Common = ...
+assert(Common and Common.LP, "skins: Common not injected")
+
+local Skin = {libs = false, equipped = {}, mods = {}, started = false}
+
+function Skin.Clone(name, ctype)
+    local CLB = Skin.mods.CLB
+    if not CLB or not CLB.Cosmetics then return nil end
+    local resolved = (CLB.RENAMED_COSMETICS and CLB.RENAMED_COSMETICS[name]) or name
+    local base = CLB.Cosmetics[resolved]
+    if not base then
+        local lw = string.lower(tostring(resolved))
+        for k, v in pairs(CLB.Cosmetics) do
+            if string.lower(tostring(k)) == lw then base, resolved = v, k break end
+        end
+    end
+    if not base then return nil end
+    local d = {}
+    for k, v in pairs(base) do d[k] = v end
+    d.Name, d.Type, d.Seed = resolved, d.Type or ctype, math.random(1, 1000000)
+    return d
+end
+
+function Skin.Weapons()
+    local ILB = Skin.mods.ILB
+    local out = {}
+    if ILB and ILB.Items then
+        for k in pairs(ILB.Items) do
+            if not string.find(tostring(k), "MISSING_") then out[#out+1] = tostring(k) end
+        end
+        table.sort(out)
+    else
+        for _, w in ipairs({"Assault Rifle","SMG","Shotgun","Sniper","Pistol","Revolver","Knife","Katana","Scythe"}) do
+            out[#out+1] = w
+        end
+    end
+    return out
+end
+
+function Skin.Apply(C)
+    if not Skin.libs then C.Skin.Status = "libs not ready" return end
+    local wpn = C.Skin.Weapon
+    if C.Skin.Skin ~= "" then
+        local d = Skin.Clone(C.Skin.Skin, "Skin")
+        if d then
+            Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+            Skin.equipped[wpn].Skin = d
+        else
+            C.Skin.Status = "skin not found: " .. C.Skin.Skin
+            return
+        end
+    end
+    if C.Skin.Wrap ~= "" then
+        local d = Skin.Clone(C.Skin.Wrap, "Wrap")
+        if d then
+            Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+            Skin.equipped[wpn].Wrap = d
+        end
+    end
+    -- no server replicate in safe mode (it crashed). Ownership patch is enough:
+    -- open locker, everything shows as owned, equip from there.
+    C.Skin.Status = "owned-all: open locker, equip " .. wpn
+end
+
+function Skin.start(C)
+    if Skin.started then return end
+    Skin.started = true
+    task.spawn(function()
+        local function set(s) C.Skin.Status = s end
+        local ok, err = pcall(function()
+            local LP = Common.LP
+            set("searching libs...")
+            -- DIRECT paths only. No deep scans: game:FindFirstChild(x,true)
+            -- on Rivals hangs the thread for minutes. 6 quick tries max.
+            local cl, il, dc = nil, nil, nil
+            for i = 1, 6 do
+                set("searching libs... " .. tostring(i) .. "/6")
+                local mods = Common.RSv:FindFirstChild("Modules")
+                if mods then
+                    cl = cl or mods:FindFirstChild("CosmeticLibrary")
+                    il = il or mods:FindFirstChild("ItemLibrary")
+                end
+                local ps = LP and LP:FindFirstChild("PlayerScripts")
+                local ct = ps and ps:FindFirstChild("Controllers")
+                dc = dc or (ct and ct:FindFirstChild("PlayerDataController"))
+                if cl and il and dc then break end
+                task.wait(0.5)
+            end
+            if not (cl and il and dc) then
+                set("libs not found: patch moved?")
+                return
+            end
+            set("loading libs...")
+            local CLB, ILB, DCC = nil, nil, nil
+            local okR, errR = pcall(function()
+                CLB = require(cl)
+                set("loading libs... 1/3")
+                ILB = require(il)
+                set("loading libs... 2/3")
+                DCC = require(dc)
+                set("loading libs... 3/3")
+            end)
+            if not okR then
+                set("ERR require: " .. tostring(errR):sub(1, 60))
+                return
+            end
+            Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
+            -- SURGICAL: Owns* patches (safe, functions only) + GetWeaponData merge.
+            -- NO inventory proxies: returning `true` where game expects tables
+            -- spams "Missing description" x400 and breaks locker reads.
+            pcall(function()
+                CLB.OwnsCosmeticNormally = function() return true end
+                CLB.OwnsCosmeticUniversally = function() return true end
+                CLB.OwnsCosmeticForSomething = function() return true end
+                CLB.OwnsCosmeticForWeapon = function() return true end
+                local oOwn = CLB.OwnsCosmetic
+                CLB.OwnsCosmetic = function(self, inv, name, wpn)
+                    if name and string.find(tostring(name), "MISSING_") then
+                        return oOwn(self, inv, name, wpn)
+                    end
+                    return true
+                end
+            end)
+            pcall(function()
+                DCC.OwnsAllWeapons = function() return true end
+                local oGWD = DCC.GetWeaponData
+                DCC.GetWeaponData = function(self, wpn)
+                    local d = {Unlocked=true, Level=100, XP=99999}
+                    local ok, od = pcall(oGWD, self, wpn)
+                    if ok and typeof(od) == "table" then
+                        for k, v in pairs(od) do d[k] = v end
+                    end
+                    if Skin.equipped[wpn] then
+                        for kt, vd in pairs(Skin.equipped[wpn]) do d[kt] = vd end
+                    end
+                    return d
+                end
+            end)
+            -- EQUIP INTERCEPT (local visual only, server never sees it):
+            -- locker locks stay, but our Skins UI equips straight into viewmodel
+            -- data via GetWeaponData merge above. No viewmodel hooks, no replicate.
+            pcall(function()
+                local rem = Common.RSv:FindFirstChild("Remotes")
+                local dr = rem and rem:FindFirstChild("Data")
+                local eq = dr and dr:FindFirstChild("EquipCosmetic")
+                if eq and typeof(hookmetamethod) == "function" and not Skin._eqHook then
+                    Skin._eqHook = true
+                    local old
+                    old = hookmetamethod(game, "__namecall", function(self, ...)
+                        if getnamecallmethod() == "FireServer" and self == eq then
+                            local wpn, ctype, cname = ...
+                            if C.Skin.Enabled and cname and cname ~= ""
+                                and cname ~= "None" and cname ~= "RANDOM_COSMETIC" then
+                                local data = Skin.Clone(cname, ctype)
+                                if data then
+                                    Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+                                    Skin.equipped[wpn][ctype] = data
+                                    C.Skin.Status = "sent " .. tostring(cname) .. " to server"
+                                    -- FORWARD (not swallow): Owns* patches say we own it,
+                                    -- if server trusts client checks, skin applies for real
+                                end
+                            end
+                        end
+                        return old(self, ...)
+                    end)
+                end
+            end)
+            -- VIEWMODEL hook REMOVED (froze the game). Back to data merge only:
+            -- Wear stores skin, GetWeaponData serves it. If game snapshot
+            -- ignores it, skins stay locker-only. No freeze > no skin.
+            -- VIEWMODEL bypass v2: DIRECT paths only (no deep scans).
+            -- If this freezes, report and it gets reverted same day.
+            pcall(function()
+                local LP2 = Common.LP
+                C.Skin.Status = "vm hook..."
+                local ps = LP2 and LP2:FindFirstChild("PlayerScripts")
+                local mods = ps and ps:FindFirstChild("Modules")
+                local crc = mods and mods:FindFirstChild("ClientReplicatedClasses")
+                local cf = crc and crc:FindFirstChild("ClientFighter")
+                local ciMod = cf and cf:FindFirstChild("ClientItem")
+                if not ciMod then
+                    C.Skin.Status = "unlocked (no vm path)"
+                    return
+                end
+                local CI = require(ciMod)
+                if CI and CI._CreateViewModel and not Skin._vmHook then
+                    Skin._vmHook = true
+                    local orig = CI._CreateViewModel
+                    CI._CreateViewModel = function(self, ref)
+                        pcall(function()
+                            local wpn = self.Name
+                            local pl = self.ClientFighter and self.ClientFighter.Player
+                            local eq = Skin.equipped[wpn]
+                            if pl == LP2 and eq and eq.Skin and ref then
+                                if ref.Data then
+                                    ref.Data.Skin = eq.Skin
+                                    ref.Data.Name = eq.Skin.Name
+                                end
+                            end
+                        end)
+                        return orig(self, ref)
+                    end
+                    C.Skin.Status = "unlocked + vm bypass"
+                else
+                    C.Skin.Status = "unlocked (vm taken)"
+                end
+            end)
+            if C.Skin.Status == "unlocked: pick skin below" then
+                -- keep legacy text if hook block skipped
+            end
+            Skin.libs = true
+        end)
+        if not ok then
+            set("ERR: " .. tostring(err):sub(1, 90))
+        end
+        -- reset started so user can retry the button
+        if not Skin.libs then Skin.started = false end
+    end)
+end
+
+-- Wear: fires the game's own equip remote; our intercept stores it locally
+-- (server never sees it). Then re-equip the weapon in hand.
+function Skin.Wear(C, sname)
+    if not Skin.libs then
+        C.Skin.Status = "press UNLOCK first"
+        return
+    end
+    if not sname or sname == "" then
+        C.Skin.Status = "empty name"
+        return
+    end
+    C.Skin.Enabled = true
+    local data = Skin.Clone(sname, "Skin")
+    if not data then
+        C.Skin.Status = "not found: " .. tostring(sname)
+        return
+    end
+    local wpn = C.Skin.Weapon
+    Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+    Skin.equipped[wpn].Skin = data
+    C.Skin.Skin = sname
+    -- also tell the game (intercepted -> local only)
+    pcall(function()
+        local rem = Common.RSv:FindFirstChild("Remotes")
+        local dr = rem and rem:FindFirstChild("Data")
+        local eq = dr and dr:FindFirstChild("EquipCosmetic")
+        if eq then eq:FireServer(wpn, "Skin", sname, {}) end
+    end)
+    C.Skin.Status = "wearing " .. sname .. " (re-equip " .. wpn .. ")"
+end
+
+return Skin
+
+--@@END
+--@@FILE:misc.lua
+-- rivals.pro NL | modules/misc.lua (dedicated file)
+
+local Common = ...
+assert(Common and Common.LP, "misc: Common not injected")
+
+local Misc = {}
+
+function Misc.start(C)
+    if C.Misc.AFK then
+        pcall(function()
+            local vu = game:GetService("VirtualUser")
+            Common.LP.Idled:Connect(function()
+                vu:CaptureController()
+                vu:ClickButton2(Vector2.new())
+            end)
+        end)
+    end
+    Common.RS.RenderStepped:Connect(function()
+        if C.Misc.NoShake then
+            local h = Common.humOf(Common.LP)
+            if h then h.CameraOffset = Vector3.zero end
+        end
+        if C.Misc.Bright then
+            Common.Lighting.Brightness = 2 Common.Lighting.ClockTime = 14
+            Common.Lighting.FogEnd = 1e5 Common.Lighting.GlobalShadows = false
+        end
+    end)
+end
+
+return Misc
+
+--@@END
+--@@FILE:cfg.lua
+-- rivals.pro NL | modules/cfg.lua (dedicated file: save/load settings)
+-- executor file funcs: writefile/readfile/isfile/isfolder/makefolder
+
+local Common = ...
+assert(Common and Common.LP, "cfg: Common not injected")
+
+local Cfg = {folder = "rivals-pro", cur = "default"}
+
+local function enc(v)
+    local t = typeof(v)
+    if t == "boolean" or t == "number" then return tostring(v) end
+    if t == "string" then return string.format("%q", v) end
+    if t == "EnumItem" then return "ENUM:" .. tostring(v) end
+    return nil
+end
+
+local function flat(C)
+    local o = {}
+    for sect, tbl in pairs(C) do
+        if typeof(tbl) == "table" then
+            for k, v in pairs(tbl) do
+                local e = enc(v)
+                if e then o[sect .. "." .. k] = e end
+            end
+        end
+    end
+    return o
+end
+
+local function serTable(o)
+    local parts = {"{"}
+    for k, v in pairs(o) do
+        parts[#parts+1] = string.format("[%q]=%s,", k, v)
+    end
+    parts[#parts+1] = "}"
+    return table.concat(parts)
+end
+
+local function deser(src)
+    local fn, err = loadstring("return " .. src)
+    if not fn then return nil, err end
+    local ok, t = pcall(fn)
+    if not ok or typeof(t) ~= "table" then return nil, "bad cfg" end
+    return t
+end
+
+function Cfg.save(C, name)
+    if not writefile then return false, "no writefile" end
+    name = (name and #name > 0) and name or Cfg.cur
+    Cfg.cur = name
+    pcall(function() if not isfolder(Cfg.folder) then makefolder(Cfg.folder) end end)
+    local ok, err = pcall(function()
+        writefile(Cfg.folder .. "/" .. name .. ".lua", serTable(flat(C)))
+    end)
+    if not ok then return false, tostring(err) end
+    return true
+end
+
+function Cfg.load(C, name)
+    if not (readfile and isfile) then return false, "no readfile" end
+    name = (name and #name > 0) and name or Cfg.cur
+    local path = Cfg.folder .. "/" .. name .. ".lua"
+    if not isfile(path) then return false, "not found: " .. name end
+    local src = readfile(path)
+    local t, err = deser(src)
+    if not t then return false, tostring(err) end
+    local n = 0
+    for k, v in pairs(t) do
+        local sect, key = k:match("^([^.]+)%.(.+)$")
+        if sect and key and C[sect] ~= nil then
+            if v == "true" then C[sect][key] = true n = n + 1
+            elseif v == "false" then C[sect][key] = false n = n + 1
+            elseif tonumber(v) then C[sect][key] = tonumber(v) n = n + 1
+            elseif type(v) == "string" and v:sub(1, 5) ~= "ENUM:" then
+                C[sect][key] = v n = n + 1
+            end
+        end
+    end
+    Cfg.cur = name
+    return true, tostring(n) .. " values"
+end
+
+return Cfg
+
+--@@END
+--@@FILE:trigger.lua
+-- rivals.pro NL | modules/trigger.lua (dedicated file: auto-fire on crosshair)
+-- usage: local Trig = loadModule("trigger.lua", Common); Trig.start(C)
+
+local Common = ...
+assert(Common and Common.LP, "trigger: Common not injected")
+
+local Trig = {down = false}
+
+local function setMouseDown(v)
+    if v == Trig.down then return end
+    Trig.down = v
+    pcall(function()
+        if mouse1press and mouse1release then
+            if v then mouse1press() else mouse1release() end
+        end
+    end)
+end
+
+function Trig.start(C)
+    local T = C.Trig
+    Common.RS.RenderStepped:Connect(function()
+        local ok, err = pcall(function()
+            if not T.Enabled then
+                setMouseDown(false)
+                return
+            end
+            -- hold key gate (optional): if Key set, require hold
+            if T.Key then
+                local held = false
+                pcall(function()
+                    held = Common.UIS:IsKeyDown(T.Key)
+                        or Common.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+                end)
+                if not held then setMouseDown(false) return end
+            end
+            local c = Common.cam()
+            if not c then setMouseDown(false) return end
+            local mp = Common.UIS:GetMouseLocation()
+            local ray = c:ViewportPointToRay(mp.X, mp.Y)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local myCh = Common.charOf(Common.LP)
+            params.FilterDescendantsInstances = myCh and {myCh, c} or {c}
+            params.IgnoreWater = true
+            local res = workspace:Raycast(ray.Origin, ray.Direction * T.Dist, params)
+            if not res or not res.Instance then setMouseDown(false) return end
+            local mdl = res.Instance:FindFirstAncestorOfClass("Model")
+            local hum = mdl and mdl:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then setMouseDown(false) return end
+            local pl = Common.Players:GetPlayerFromCharacter(mdl)
+            if pl and pl ~= Common.LP then
+                if T.Team and Common.teammate(pl) then setMouseDown(false) return end
+                -- delay gate (human-like reaction)
+                local now = os.clock()
+                Trig._seen = Trig._seen or 0
+                if (now - Trig._seen) * 1000 < T.Delay then
+                    return -- keep previous state during delay
+                end
+                setMouseDown(true)
+            else
+                Trig._seen = os.clock()
+                setMouseDown(false)
+            end
+        end)
+        if not ok then
+            Trig._err = (Trig._err or 0) + 1
+            if Trig._err < 5 then warn("[nl] trig frame: " .. tostring(err)) end
+            setMouseDown(false)
+        end
+    end)
+end
+
+return Trig
+
+--@@END
+--@@FILE:imgui.lua
+-- rivals.pro NL | ui/imgui.lua
+-- MEDUSA clickgui style: near-black, purple accent, logo header,
+-- top icon bar (pulse icons), left category list, rows with
+-- right-side purple checkboxes, pill dropdowns, purple sliders.
+-- Toggle: INSERT. Icons: assets/icons/*.png via getcustomasset (fallback: text).
+-- usage: local Im = loadModule("nl/ui/imgui.lua")(Common, C, Mods)
+
+local Common, C, Mods = ...
+assert(Common and C and Mods, "imgui: args missing")
+
+local Im = {}
+-- medusa palette
+Im.ACC = Color3.fromRGB(168, 130, 255)
+Im.BG = Color3.fromRGB(13, 13, 17)
+Im.PANEL = Color3.fromRGB(19, 19, 25)
+Im.ROW = Color3.fromRGB(26, 26, 33)
+Im.TXT = Color3.fromRGB(235, 235, 240)
+Im.DIM = Color3.fromRGB(130, 130, 142)
+Im.OFF = Color3.fromRGB(45, 45, 55)
+
+-- icon helper: tries executor file first, else nil (text fallback)
+function Im.icon(name, size)
+    local img = Instance.new("ImageLabel")
+    img.BackgroundTransparency = 1
+    img.Size = UDim2.new(0, size or 18, 0, size or 18)
+    img.ImageColor3 = Im.DIM
+    local ok, path = pcall(function()
+        if getcustomasset then
+            return getcustomasset("rivals-pro/assets/icons/" .. name .. ".png")
+        end
+        return nil
+    end)
+    if ok and path then
+        img.Image = path
+    else
+        -- fallback glyphs (ASCII only)
+        local glyphs = {home="H", modules="M", visuals="V", loot="L", utilities="U",
+            configs="C", friends="F", hud="D", search="S", shield="*", bell="!",
+            key="K", save=">", load="<", trash="X", play=">", pause="||"}
+        local t = Instance.new("TextLabel")
+        t.Size = img.Size t.BackgroundTransparency = 1
+        t.Text = glyphs[name] or "o" t.TextColor3 = Im.DIM
+        t.Font = Enum.Font.GothamBold t.TextSize = 12 t.Parent = img
+        img.Image = ""
+    end
+    return img
+end
+
+function Im.build(pages, curName, onPick)
+    pages = pages or {"Aimbot"}
+    curName = curName or pages[1]
+    onPick = onPick or function() end
+    local parent
+    do
+        local okH, h = pcall(function() return gethui and gethui() end)
+        if okH and h then parent = h
+        else
+            local okC, cg = pcall(function() return game:GetService("CoreGui") end)
+            local probe = Instance.new("ScreenGui")
+            local okP = pcall(function() probe.Parent = cg probe:Destroy() end)
+            parent = (okC and okP) and cg or Common.LP:WaitForChild("PlayerGui")
+        end
+    end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "rivalspro" gui.ResetOnSpawn = false gui.Parent = parent
+    Im.gui = gui
+
+    -- LOADING SPLASH (medusa style, no icons, text only)
+    local splash = Instance.new("Frame")
+    splash.Size = UDim2.new(0, 340, 0, 120) splash.Position = UDim2.new(0.5, -170, 0.5, -60)
+    splash.BackgroundColor3 = Im.BG splash.BorderSizePixel = 0 splash.Parent = gui
+    Instance.new("UICorner", splash).CornerRadius = UDim.new(0, 8)
+    local sl = Instance.new("TextLabel")
+    sl.Size = UDim2.new(1, 0, 0, 30) sl.Position = UDim2.new(0, 0, 0, 12)
+    sl.BackgroundTransparency = 1 sl.Text = "MEDUSA"
+    sl.TextColor3 = Im.TXT sl.Font = Enum.Font.GothamBlack sl.TextSize = 20 sl.Parent = splash
+    local ss = Instance.new("TextLabel")
+    ss.Name = "SplashStatus" ss.Size = UDim2.new(1, 0, 0, 16) ss.Position = UDim2.new(0, 0, 0, 44)
+    ss.BackgroundTransparency = 1 ss.Text = "loading..."
+    ss.TextColor3 = Im.DIM ss.Font = Enum.Font.Gotham ss.TextSize = 11 sl.Parent = splash
+    local sbar = Instance.new("Frame")
+    sbar.Size = UDim2.new(1, -40, 0, 6) sbar.Position = UDim2.new(0, 20, 0, 72)
+    sbar.BackgroundColor3 = Im.OFF sbar.BorderSizePixel = 0 sbar.Parent = splash
+    Instance.new("UICorner", sbar).CornerRadius = UDim.new(1, 0)
+    local sfill = Instance.new("Frame")
+    sfill.Size = UDim2.new(0, 0, 1, 0) sfill.BorderSizePixel = 0
+    sfill.BackgroundColor3 = Im.ACC sfill.Parent = sbar
+    Instance.new("UICorner", sfill).CornerRadius = UDim.new(1, 0)
+    Im.splash, Im.splashFill, Im.splashStatus = splash, sfill, ss
+
+    -- main window
+    local win = Instance.new("Frame")
+    win.Visible = false -- hidden until Im.finish()
+    win.Size = UDim2.new(0, 620, 0, 400) win.Position = UDim2.new(0.5, -310, 0.5, -200)
+    win.BackgroundColor3 = Im.BG win.BorderSizePixel = 0
+    win.Active = true win.Draggable = true win.Parent = gui
+    Instance.new("UICorner", win).CornerRadius = UDim.new(0, 8)
+    Im.win = win
+
+    -- header: text logo + build date (no icons)
+    local head = Instance.new("Frame")
+    head.Size = UDim2.new(1, 0, 0, 52) head.BackgroundTransparency = 1 head.Parent = win
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 10, 0, 10) dot.Position = UDim2.new(0, 16, 0, 16)
+    dot.BackgroundColor3 = Im.ACC dot.BorderSizePixel = 0 dot.Parent = head
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    local ttl = Instance.new("TextLabel")
+    ttl.Position = UDim2.new(0, 46, 0, 6) ttl.Size = UDim2.new(0, 200, 0, 22)
+    ttl.BackgroundTransparency = 1 ttl.Text = "MEDUSA" ttl.TextColor3 = Im.TXT
+    ttl.Font = Enum.Font.GothamBlack ttl.TextSize = 16
+    ttl.TextXAlignment = Enum.TextXAlignment.Left ttl.Parent = head
+    local sub = Instance.new("TextLabel")
+    sub.Position = UDim2.new(0, 47, 0, 26) sub.Size = UDim2.new(0, 200, 0, 14)
+    sub.BackgroundTransparency = 1 ttl.Text = "MEDUSA"
+    sub.Text = "Build date: Sep 14 2026" sub.TextColor3 = Im.DIM
+    sub.Font = Enum.Font.Gotham sub.TextSize = 10
+    sub.TextXAlignment = Enum.TextXAlignment.Left sub.Parent = head
+
+    -- version tag top-right (text only, no icons)
+    local ver = Instance.new("TextLabel")
+    ver.Size = UDim2.new(0, 200, 0, 20) ver.Position = UDim2.new(1, -210, 0, 14)
+    ver.BackgroundColor3 = Im.PANEL ver.BorderSizePixel = 0
+    ver.Text = "v3 LASTEST" ver.TextColor3 = Im.DIM
+    ver.Font = Enum.Font.Gotham ver.TextSize = 11 ver.Parent = head
+    Instance.new("UICorner", ver).CornerRadius = UDim.new(0, 6)
+
+    -- tab strip: buttons created HERE with direct refs (no searching)
+    local tabs = Instance.new("Frame")
+    tabs.Name = "TabStrip"
+    tabs.Size = UDim2.new(1, -16, 0, 28) tabs.Position = UDim2.new(0, 8, 0, 56)
+    tabs.BackgroundTransparency = 1 tabs.Parent = win
+    local tl = Instance.new("UIListLayout", tabs)
+    tl.FillDirection = Enum.FillDirection.Horizontal tl.Padding = UDim.new(0, 4)
+    Im.tabsBar = tabs
+    Im.tabBtns = {}
+    Im.curTab = curName
+    Im._pages = pages
+    Im._onPick = onPick
+    local function paintTabs()
+        for n, b in pairs(Im.tabBtns) do
+            local act = (n == Im.curTab)
+            b.BackgroundColor3 = act and Im.ACC or Im.ROW
+            b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
+        end
+        -- cat list ALWAYS routes through select (no stale paths)
+        if Im.paintCat then
+            Im.paintCat(pages, Im.curTab, function(nn)
+                Im.select(nn, Im._onPick)
+            end)
+        end
+    end
+    for idx, n in ipairs(pages) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 78, 1, 0) b.BackgroundColor3 = Im.ROW
+        b.BorderSizePixel = 0 b.LayoutOrder = idx
+        b.Text = n b.Font = Enum.Font.GothamBold b.TextSize = 11
+        b.TextColor3 = Im.DIM b.AutoButtonColor = false b.Parent = tabs
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+        Im.tabBtns[n] = b
+        b.MouseButton1Click:Connect(function()
+            Im.select(n, nil)
+            if Im._onPick then Im._onPick(n) end
+        end)
+    end
+    paintTabs()
+    -- single entry to switch page: repaints tabs + cat, then builds content
+    function Im.select(name, onPickFn)
+        Im.curTab = name
+        if onPickFn then Im._onPick = onPickFn end
+        -- repaint tabs
+        for n, b in pairs(Im.tabBtns) do
+            local act = (n == Im.curTab)
+            b.BackgroundColor3 = act and Im.ACC or Im.ROW
+            b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
+        end
+        if Im.paintCat then
+            Im.paintCat(pages, Im.curTab, function(nn)
+                Im.select(nn, nil)
+                if Im._onPick then Im._onPick(nn) end
+            end)
+        end
+        if onPickFn then onPickFn(name) end
+    end
+    Im._pages = pages
+    Im._onPick = onPick
+
+    -- content: left category list + right single panel (medusa: list left, settings right)
+    local cat = Instance.new("Frame")
+    cat.Size = UDim2.new(0, 150, 1, -96) cat.Position = UDim2.new(0, 8, 0, 88)
+    cat.BackgroundColor3 = Im.PANEL cat.BorderSizePixel = 0 cat.Parent = win
+    Instance.new("UICorner", cat).CornerRadius = UDim.new(0, 6)
+    local cl = Instance.new("UIListLayout", cat) cl.Padding = UDim.new(0, 2)
+    local cp = Instance.new("UIPadding", cat)
+    cp.PaddingTop = UDim.new(0, 6) cp.PaddingLeft = UDim.new(0, 6) cp.PaddingRight = UDim.new(0, 6)
+    Im.cat = cat
+    Im.catBtns = {}
+    -- medusa left category list (mirrors tabs)
+    function Im.paintCat(names, curName, onPick)
+        for _, w in ipairs(cat:GetChildren()) do
+            if w:IsA("TextButton") then w:Destroy() end
+        end
+        Im.catBtns = {}
+        for _, n in ipairs(names) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 26) b.AutoButtonColor = false
+            b.BackgroundColor3 = (n == curName) and Im.ROW or Im.PANEL
+            b.BorderSizePixel = 0
+            b.Text = " " .. n b.Font = Enum.Font.Gotham b.TextSize = 12
+            b.TextColor3 = (n == curName) and Im.ACC or Im.DIM
+            b.TextXAlignment = Enum.TextXAlignment.Left b.Parent = cat
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+            b.MouseButton1Click:Connect(function() onPick(n) end)
+            Im.catBtns[n] = b
+        end
+    end
+
+    local body = Instance.new("ScrollingFrame")
+    body.Size = UDim2.new(1, -174, 1, -96) body.Position = UDim2.new(0, 166, 0, 88)
+    body.BackgroundColor3 = Im.PANEL body.BorderSizePixel = 0
+    body.ScrollBarThickness = 3 body.CanvasSize = UDim2.new(0, 0, 0, 900) body.Parent = win
+    Instance.new("UICorner", body).CornerRadius = UDim.new(0, 6)
+    local bl = Instance.new("UIListLayout", body) bl.Padding = UDim.new(0, 6)
+    local bp = Instance.new("UIPadding", body)
+    bp.PaddingTop = UDim.new(0, 10) bp.PaddingLeft = UDim.new(0, 12) bp.PaddingRight = UDim.new(0, 12)
+    -- compat: init.lua writes into Im.left / Im.right; map both to body columns
+    local left = Instance.new("Frame")
+    left.Size = UDim2.new(1, 0, 0, 0) left.BackgroundTransparency = 1 left.AutomaticSize = Enum.AutomaticSize.Y
+    left.Parent = body
+    local ll = Instance.new("UIListLayout", left) ll.Padding = UDim.new(0, 6)
+    local right = Instance.new("Frame")
+    right.Size = UDim2.new(1, 0, 0, 0) right.BackgroundTransparency = 1 right.AutomaticSize = Enum.AutomaticSize.Y
+    right.Parent = body
+    local rl = Instance.new("UIListLayout", right) rl.Padding = UDim.new(0, 6)
+    Im.left, Im.right = left, right
+    Im.pages = {}
+    Im.tabBtns = {}
+
+    Common.UIS.InputBegan:Connect(function(i, g)
+        if g then return end
+        if i.KeyCode == Enum.KeyCode.Insert then
+            win.Visible = not win.Visible
+        end
+    end)
+    -- watermark
+    local wm = Instance.new("TextLabel")
+    wm.Size = UDim2.new(0, 260, 0, 20) wm.Position = UDim2.new(0, 10, 0, 10)
+    wm.BackgroundColor3 = Im.BG wm.BorderSizePixel = 0
+    wm.TextColor3 = Im.TXT wm.Font = Enum.Font.Gotham wm.TextSize = 12
+    wm.TextXAlignment = Enum.TextXAlignment.Left wm.Parent = gui
+    Instance.new("UICorner", wm).CornerRadius = UDim.new(0, 5)
+    task.spawn(function()
+        local last = os.clock() local frames = 0
+        Common.RS.RenderStepped:Connect(function() frames = frames + 1 end)
+        while true do
+            task.wait(1)
+            pcall(function()
+                local now = os.clock()
+                local fps = (now - last) > 0 and math.floor(frames / (now - last) + 0.5) or 60
+                frames, last = 0, now
+                local tgt = (Mods.Aimbot and Mods.Aimbot.targetName) or "none"
+                wm.Text = " medusa | " .. tostring(fps) .. "fps | " .. tostring(tgt)
+            end)
+        end
+    end)
+
+    return Im
+end
+
+-- splash progress 0..1 + text; call during load, then Im.finish()
+function Im.progress(pct, text)
+    pcall(function()
+        Im.splashFill.Size = UDim2.new(math.clamp(pct or 0, 0, 1), 0, 1, 0)
+        if text then Im.splashStatus.Text = text end
+    end)
+end
+function Im.finish()
+    pcall(function() Im.splash:Destroy() end)
+    pcall(function() Im.win.Visible = true end)
+end
+
+-- ---- medusa widgets ----
+-- row: label left, purple checkbox right (like screenshot)
+function Im.checkbox(parent, label, tbl, key, cb)
+    local row = Instance.new("TextButton")
+    row.Size = UDim2.new(1, 0, 0, 26) row.BackgroundTransparency = 1
+    row.Text = "" row.AutoButtonColor = false row.Parent = parent
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, -30, 1, 0) t.BackgroundTransparency = 1
+    t.Text = label t.Font = Enum.Font.Gotham t.TextSize = 12
+    t.TextXAlignment = Enum.TextXAlignment.Left t.Parent = row
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0, 16, 0, 16) box.Position = UDim2.new(1, -20, 0.5, -8)
+    box.BorderSizePixel = 0 box.Parent = row
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+    local mark = Instance.new("TextLabel")
+    mark.Size = UDim2.new(1, 0, 1, 0) mark.BackgroundTransparency = 1
+    mark.Text = "+" mark.Font = Enum.Font.GothamBold mark.TextSize = 12
+    mark.TextColor3 = Color3.new(1,1,1) mark.Parent = box
+    local function rf()
+        t.TextColor3 = tbl[key] and Im.TXT or Im.DIM
+        box.BackgroundColor3 = tbl[key] and Im.ACC or Im.OFF
+        mark.Text = tbl[key] and "+" or ""
+    end
+    rf()
+    row.MouseButton1Click:Connect(function()
+        tbl[key] = not tbl[key]
+        if cb then pcall(cb, tbl[key]) end
+        rf()
+    end)
+    return row
+end
+
+-- medusa slider: label + value right, purple bar with knob
+function Im.slider(parent, label, tbl, key, mn, mx, sp)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 40) f.BackgroundTransparency = 1 f.Parent = parent
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(0.6, 0, 0, 16) t.BackgroundTransparency = 1
+    t.Text = label t.TextColor3 = Im.DIM t.Font = Enum.Font.Gotham t.TextSize = 12
+    t.TextXAlignment = Enum.TextXAlignment.Left t.Parent = f
+    local v = Instance.new("TextLabel")
+    v.Size = UDim2.new(0.4, 0, 0, 16) v.Position = UDim2.new(0.6, 0, 0, 0)
+    v.BackgroundTransparency = 1
+    v.TextColor3 = Im.TXT v.Font = Enum.Font.Gotham v.TextSize = 12
+    v.TextXAlignment = Enum.TextXAlignment.Right v.Parent = f
+    local bar = Instance.new("TextButton")
+    bar.Size = UDim2.new(1, 0, 0, 6) bar.Position = UDim2.new(0, 0, 0, 26)
+    bar.BackgroundColor3 = Im.OFF bar.BorderSizePixel = 0
+    bar.Text = "" bar.AutoButtonColor = false bar.Parent = f
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.5, 0, 1, 0) fill.BorderSizePixel = 0
+    fill.BackgroundColor3 = Im.ACC fill.Parent = bar
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 12, 0, 12) knob.BorderSizePixel = 0
+    knob.BackgroundColor3 = Color3.new(1,1,1) knob.Parent = bar
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    local function rf()
+        local val = tbl[key]
+        local fr = (val - mn) / math.max(mx - mn, 1e-6)
+        fr = math.clamp(fr, 0, 1)
+        fill.Size = UDim2.new(fr, 0, 1, 0)
+        knob.Position = UDim2.new(fr, -6, 0.5, -6)
+        local disp = val
+        if sp < 1 then disp = math.floor(val / sp + 0.5) * sp end
+        if sp >= 1 then disp = string.format("%d", math.floor(disp + 0.5))
+        else disp = tostring(disp) end
+        v.Text = disp
+    end
+    rf()
+    local function setFromX(x)
+        local ax = bar.AbsolutePosition.X
+        local aw = math.max(bar.AbsoluteSize.X, 1)
+        local fr = math.clamp((x - ax) / aw, 0, 1)
+        local steps = math.floor(((mx - mn) / sp) + 0.5)
+        tbl[key] = mn + math.floor(fr * steps + 0.5) * sp
+        rf()
+    end
+    bar.MouseButton1Down:Connect(function(x) setFromX(x) end)
+    Common.UIS.InputChanged:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseMovement
+            and Common.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+            local m = Common.UIS:GetMouseLocation()
+            local p = bar.AbsolutePosition
+            local s = bar.AbsoluteSize
+            if m.Y >= p.Y - 8 and m.Y <= p.Y + s.Y + 8 then
+                setFromX(m.X)
+            end
+        end
+    end)
+    return f
+end
+
+-- medusa dropdown: label left + pill right
+function Im.combo(parent, label, tbl, key, opts)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 26) row.BackgroundTransparency = 1 row.Parent = parent
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(0.35, 0, 1, 0) t.BackgroundTransparency = 1
+    t.Text = label t.TextColor3 = Im.DIM t.Font = Enum.Font.Gotham t.TextSize = 12
+    t.TextXAlignment = Enum.TextXAlignment.Left t.Parent = row
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.65, 0, 0, 22) b.Position = UDim2.new(0.35, 0, 0.5, -11)
+    b.BackgroundColor3 = Im.ROW b.BorderSizePixel = 0
+    b.TextColor3 = Im.DIM b.Font = Enum.Font.Gotham b.TextSize = 11
+    b.AutoButtonColor = false b.Parent = row
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    local function rf() b.Text = tostring(tbl[key]) .. "  v" end
+    rf()
+    b.MouseButton1Click:Connect(function()
+        local i = 1
+        for k, vv in ipairs(opts) do if vv == tbl[key] then i = k break end end
+        tbl[key] = opts[(i % #opts) + 1]
+        rf()
+    end)
+    return row
+end
+
+function Im.group(parent, title)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, 18) l.BackgroundTransparency = 1
+    l.Text = title l.TextColor3 = Im.DIM
+    l.Font = Enum.Font.Gotham l.TextSize = 11
+    l.TextXAlignment = Enum.TextXAlignment.Left l.Parent = parent
+end
+
+function Im.button(parent, label, fn)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 28) b.BackgroundColor3 = Im.ACC
+    b.BorderSizePixel = 0
+    b.Text = label b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.GothamBold b.TextSize = 12 b.AutoButtonColor = false b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    b.MouseButton1Click:Connect(function() pcall(fn) end)
+    return b
+end
+
+function Im.textbox(parent, placeholder)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, 0, 0, 24) box.BackgroundColor3 = Im.ROW
+    box.BorderSizePixel = 0
+    box.TextColor3 = Im.TXT box.Font = Enum.Font.Gotham box.TextSize = 12
+    box.PlaceholderText = placeholder or "" box.PlaceholderColor3 = Im.DIM box.Text = ""
+    box.TextXAlignment = Enum.TextXAlignment.Left box.Parent = parent
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+    return box
+end
+
+function Im.status(parent, h)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, h or 40) l.BackgroundColor3 = Im.ROW
+    l.BorderSizePixel = 0
+    l.TextColor3 = Im.DIM l.Font = Enum.Font.Gotham l.TextSize = 11
+    l.TextWrapped = true l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Top l.Parent = parent
+    Instance.new("UICorner", l).CornerRadius = UDim.new(0, 5)
+    return l
+end
+
+return Im
+
+--@@END

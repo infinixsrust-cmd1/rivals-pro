@@ -198,10 +198,11 @@ local function safeBuild(n)
     cur = n
     local ok, err = pcall(buildPage, n)
     if not ok then
-        warn("[nl] page " .. tostring(n) .. ": " .. tostring(err))
+        local full = tostring(err)
+        warn("[nl] page " .. tostring(n) .. ": " .. full)
         pcall(function()
-            local e = Im.status(Im.left, 60)
-            e.Text = "page error: " .. tostring(err):sub(1, 120)
+            local e = Im.status(Im.left, 80)
+            e.Text = "ERR: " .. full:sub(1, 300)
         end)
     end
 end

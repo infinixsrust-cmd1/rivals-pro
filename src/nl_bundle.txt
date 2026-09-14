@@ -670,7 +670,8 @@ function Skin.start(C)
             -- DIRECT paths only. No deep scans: game:FindFirstChild(x,true)
             -- on Rivals hangs the thread for minutes. 6 quick tries max.
             local cl, il, dc = nil, nil, nil
-            for _ = 1, 6 do
+            for i = 1, 6 do
+                set("searching libs... " .. tostring(i) .. "/6")
                 local mods = Common.RSv:FindFirstChild("Modules")
                 if mods then
                     cl = cl or mods:FindFirstChild("CosmeticLibrary")
@@ -686,10 +687,20 @@ function Skin.start(C)
                 set("libs not found: patch moved?")
                 return
             end
-            set("patching...")
-            local CLB = require(cl)
-            local ILB = require(il)
-            local DCC = require(dc)
+            set("loading libs...")
+            local CLB, ILB, DCC = nil, nil, nil
+            local okR, errR = pcall(function()
+                CLB = require(cl)
+                set("loading libs... 1/3")
+                ILB = require(il)
+                set("loading libs... 2/3")
+                DCC = require(dc)
+                set("loading libs... 3/3")
+            end)
+            if not okR then
+                set("ERR require: " .. tostring(errR):sub(1, 60))
+                return
+            end
             Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
             -- SAFE MODE: only ownership patches (read-path). No viewmodel hooks,
             -- no namecall hooks, no replicate-on-equip. Those crashed Rivals.

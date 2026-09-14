@@ -627,8 +627,9 @@ function Skin.Apply(C)
             Skin.equipped[wpn].Wrap = d
         end
     end
-    pcall(function() Skin.mods.DCC.CurrentData:Replicate("WeaponInventory") end)
-    C.Skin.Status = "applied to " .. wpn .. " (re-equip weapon)"
+    -- no server replicate in safe mode (it crashed). Ownership patch is enough:
+    -- open locker, everything shows as owned, equip from there.
+    C.Skin.Status = "owned-all: open locker, equip " .. wpn
 end
 
 function Skin.start(C)
@@ -647,6 +648,9 @@ function Skin.start(C)
             if not (cl and il and dc) then C.Skin.Status = "no lib modules" return end
             local CLB, ILB, DCC = require(cl), require(il), require(dc)
             Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
+            -- SAFE MODE: only ownership patches (read-path). No viewmodel hooks,
+            -- no namecall hooks, no replicate-on-equip. Those crashed Rivals.
+            -- Skins show via locker: game thinks you own everything.
             pcall(function()
                 CLB.OwnsCosmeticNormally = function() return true end
                 CLB.OwnsCosmeticUniversally = function() return true end
@@ -675,75 +679,8 @@ function Skin.start(C)
                     return d
                 end
             end)
-            pcall(function()
-                local ciMod = ps.Modules.ClientReplicatedClasses.ClientFighter.ClientItem
-                local CI = require(ciMod)
-                if CI and CI._CreateViewModel then
-                    local orig = CI._CreateViewModel
-                    CI._CreateViewModel = function(self, ref)
-                        local wpn = self.Name
-                        local pl = self.ClientFighter and self.ClientFighter.Player
-                        if pl == LP and Skin.equipped[wpn] and Skin.equipped[wpn].Skin and ref then
-                            pcall(function()
-                                local dk = self:ToEnum("Data")
-                                local sk = self:ToEnum("Skin")
-                                local nk = self:ToEnum("Name")
-                                if ref[dk] then
-                                    ref[dk][sk] = Skin.equipped[wpn].Skin
-                                    ref[dk][nk] = Skin.equipped[wpn].Skin.Name
-                                end
-                            end)
-                        end
-                        return orig(self, ref)
-                    end
-                end
-            end)
-            pcall(function()
-                local vmMod = ps.Modules.ClientReplicatedClasses.ClientFighter.ClientItem:FindFirstChild("ClientViewModel")
-                if vmMod then
-                    local CVM = require(vmMod)
-                    if CVM.GetWrap then
-                        local origW = CVM.GetWrap
-                        CVM.GetWrap = function(self)
-                            local wn = self.ClientItem and self.ClientItem.Name
-                            local pl = self.ClientItem and self.ClientItem.ClientFighter
-                                and self.ClientItem.ClientFighter.Player
-                            if wn and pl == LP and Skin.equipped[wn] and Skin.equipped[wn].Wrap then
-                                return Skin.equipped[wn].Wrap
-                            end
-                            return origW(self)
-                        end
-                    end
-                end
-            end)
-            pcall(function()
-                local rem = Common.RSv:WaitForChild("Remotes", 10)
-                local dr = rem and rem:WaitForChild("Data", 10)
-                local eq = dr and dr:WaitForChild("EquipCosmetic", 10)
-                if eq and typeof(hookmetamethod) == "function" then
-                    local old
-                    old = hookmetamethod(game, "__namecall", function(self, ...)
-                        if getnamecallmethod() == "FireServer" and self == eq and C.Skin.Enabled then
-                            local wpn, ctype, cname = ...
-                            if cname and cname ~= "" and cname ~= "None" then
-                                local data = Skin.Clone(cname, ctype)
-                                if data then
-                                    Skin.equipped[wpn] = Skin.equipped[wpn] or {}
-                                    Skin.equipped[wpn][ctype] = data
-                                    C.Skin.Status = "equipped " .. tostring(cname)
-                                    pcall(function()
-                                        Skin.mods.DCC.CurrentData:Replicate("WeaponInventory")
-                                    end)
-                                    return
-                                end
-                            end
-                        end
-                        return old(self, ...)
-                    end)
-                end
-            end)
             Skin.libs = true
-            C.Skin.Status = "ready"
+            C.Skin.Status = "ready (safe mode: pick skins in locker)"
         end)
     end)
 end

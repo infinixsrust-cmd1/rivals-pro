@@ -252,12 +252,25 @@ local function buildPage(name)
             C.Skin.Enabled = true
             C.Skin.Status = "unlocking..."
         end)
+        Im.button(L, "REFRESH LIST", function()
+            buildPage("Skins")
+        end)
+        Im.group(L, "status")
+        local stTop = Im.status(L, 40)
+        stTop.Text = "status: " .. C.Skin.Status
+        task.spawn(function()
+            while true do
+                task.wait(1)
+                local ok = pcall(function() stTop.Text = "status: " .. C.Skin.Status end)
+                if not ok or not stTop.Parent then break end
+            end
+        end)
         Im.group(L, "pick skin (click = wear)")
         do
             local list = Skins.List(24)
             if #list == 0 then
-                local h = Im.status(L, 30)
-                h.Text = "list after unlock"
+                local h = Im.status(L, 40)
+                h.Text = "empty: UNLOCK, wait unlocked, REFRESH LIST"
             end
             for _, sname in ipairs(list) do
                 Im.button(L, sname, function()
@@ -270,20 +283,9 @@ local function buildPage(name)
         Im.button(R, "WEAR TYPED", function()
             Skins.Wear(C, sb.Text)
         end)
-        Im.group(R, "status")
-        local st2 = Im.status(R, 80)
-        st2.Text = "idle"
-        task.spawn(function()
-            while true do
-                task.wait(1)
-                local ok = pcall(function()
-                    st2.Text = "status: " .. C.Skin.Status
-                        .. "\nweapon: " .. C.Skin.Weapon
-                        .. "\nlocker locks stay: wear from HERE, then re-equip weapon"
-                end)
-                if not ok or not st2.Parent then break end
-            end
-        end)
+        Im.group(R, "help")
+        local st2 = Im.status(R, 100)
+        st2.Text = "1. UNLOCK ALL SKINS\n2. wait unlocked\n3. REFRESH LIST\n4. click skin\n5. re-equip weapon\nlocker locks stay: wear HERE"
     elseif name == "Config" then
         Im.group(L, "config")
         local nb = Im.textbox(L, "name (default)")

@@ -71,14 +71,51 @@ function Skin.start(C)
     task.spawn(function()
         pcall(function()
             local LP = Common.LP
-            local mods = Common.RSv:WaitForChild("Modules", 15)
-            if not mods then C.Skin.Status = "no Modules" return end
-            local cl = mods:WaitForChild("CosmeticLibrary", 10)
-            local il = mods:WaitForChild("ItemLibrary", 10)
-            local ps = LP:WaitForChild("PlayerScripts", 15)
-            local ct = ps and ps:WaitForChild("Controllers", 10)
-            local dc = ct and ct:WaitForChild("PlayerDataController", 10)
-            if not (cl and il and dc) then C.Skin.Status = "no lib modules" return end
+            C.Skin.Status = "searching libs..."
+            -- FAST non-blocking find (WaitForChild chain = 60s freeze if names differ)
+            local function fastFind(names)
+                -- names: array of path arrays, e.g. {{"Modules","CosmeticLibrary"}}
+                local t0 = os.clock()
+                while os.clock() - t0 < 4 do
+                    for _, path in ipairs(names) do
+                        local cur = game
+                        local okAll = true
+                        for _, n in ipairs(path) do
+                            if n == "PlayerScripts" then
+                                cur = LP and LP:FindFirstChild("PlayerScripts")
+                            elseif n == "Controllers" then
+                                cur = cur and cur:FindFirstChild("Controllers")
+                            else
+                                cur = cur and (cur:FindFirstChild(n))
+                            end
+                            if not cur then okAll = false break end
+                        end
+                        if okAll and cur then return cur, path end
+                    end
+                    -- deep fallback once per second: scan ReplicatedStorage
+                    local deep = Common.RSv:FindFirstChild(names[1][#names[1]], true)
+                    if deep then return deep, {"deep"} end
+                    task.wait(0.5)
+                end
+                return nil
+            end
+            local cl = fastFind({{"ReplicatedStorage","Modules","CosmeticLibrary"},{"Modules","CosmeticLibrary"}})
+            if not cl then
+                cl = Common.RSv:FindFirstChild("CosmeticLibrary", true)
+            end
+            local il = Common.RSv:FindFirstChild("ItemLibrary", true)
+            local dc = (LP:FindFirstChild("PlayerScripts") or {})
+            dc = dc and dc:FindFirstChild("Controllers", true)
+            dc = dc and dc:FindFirstChild("PlayerDataController")
+            if not dc then
+                -- controllers may live elsewhere; deep scan once
+                dc = game:FindFirstChild("PlayerDataController", true)
+            end
+            if not (cl and il and dc) then
+                C.Skin.Status = "libs not found (ilichq)"
+                return
+            end
+            C.Skin.Status = "patching..."
             local CLB, ILB, DCC = require(cl), require(il), require(dc)
             Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
             -- SAFE MODE: only ownership patches (read-path). No viewmodel hooks,

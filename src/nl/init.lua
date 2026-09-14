@@ -40,16 +40,66 @@ local C = {
     Skin = {Enabled=false, Weapon="Assault Rifle", Skin="", Wrap="", Status="idle"},
 }
 
--- core + modules (separate files)
+-- loading splash FIRST (before heavy loads) with progress bar
+local splashGui, splashFill, splashTxt
+do
+    local parent
+    local okH, h = pcall(function() return gethui and gethui() end)
+    if okH and h then parent = h end
+    if not parent then
+        local lp0 = game:GetService("Players").LocalPlayer
+        parent = lp0 and lp0:FindFirstChildOfClass("PlayerGui")
+    end
+    splashGui = Instance.new("ScreenGui")
+    splashGui.Name = "rivalspro_load" splashGui.ResetOnSpawn = false splashGui.Parent = parent
+    local sp = Instance.new("Frame")
+    sp.Size = UDim2.new(0, 340, 0, 120) sp.Position = UDim2.new(0.5, -170, 0.5, -60)
+    sp.BackgroundColor3 = Color3.fromRGB(13, 13, 17) sp.BorderSizePixel = 0 sp.Parent = splashGui
+    Instance.new("UICorner", sp).CornerRadius = UDim.new(0, 8)
+    local sl = Instance.new("TextLabel")
+    sl.Size = UDim2.new(1, 0, 0, 30) sl.Position = UDim2.new(0, 0, 0, 12)
+    sl.BackgroundTransparency = 1 sl.Text = "MEDUSA"
+    sl.TextColor3 = Color3.new(1,1,1) sl.Font = Enum.Font.GothamBlack sl.TextSize = 20 sl.Parent = sp
+    splashTxt = Instance.new("TextLabel")
+    splashTxt.Size = UDim2.new(1, 0, 0, 16) splashTxt.Position = UDim2.new(0, 0, 0, 44)
+    splashTxt.BackgroundTransparency = 1 splashTxt.Text = "loading..."
+    splashTxt.TextColor3 = Color3.fromRGB(130,130,142) splashTxt.Font = Enum.Font.Gotham
+    splashTxt.Parent = sp
+    local sbar = Instance.new("Frame")
+    sbar.Size = UDim2.new(1, -40, 0, 6) sbar.Position = UDim2.new(0, 20, 0, 72)
+    sbar.BackgroundColor3 = Color3.fromRGB(45,45,55) sbar.BorderSizePixel = 0 sbar.Parent = sp
+    Instance.new("UICorner", sbar).CornerRadius = UDim.new(1, 0)
+    splashFill = Instance.new("Frame")
+    splashFill.Size = UDim2.new(0, 0, 1, 0) splashFill.BorderSizePixel = 0
+    splashFill.BackgroundColor3 = Color3.fromRGB(168,130,255) splashFill.Parent = sbar
+    Instance.new("UICorner", splashFill).CornerRadius = UDim.new(1, 0)
+end
+local function prog(p, t)
+    pcall(function()
+        splashFill.Size = UDim2.new(math.clamp(p, 0, 1), 0, 1, 0)
+        if t then splashTxt.Text = t end
+    end)
+    task.wait(0.05)
+end
+
+-- core + modules (separate files) with splash progress
 local Common = loadModule("nl/modules/common.lua")
 if not Common then warn("[nl] common failed") return end
+prog(0.15, "core...")
 local Aimbot = loadModule("nl/modules/aimbot.lua", Common)
+prog(0.3, "aimbot...")
 local Silent = loadModule("nl/modules/silent.lua", Common)
+prog(0.42, "silent...")
 local ESP = loadModule("nl/modules/esp.lua", Common)
+prog(0.54, "esp...")
 local GunM = loadModule("nl/modules/gunmods.lua", Common)
+prog(0.66, "combat...")
 local Move = loadModule("nl/modules/movement.lua", Common)
+prog(0.76, "movement...")
 local Skins = loadModule("nl/modules/skins.lua", Common)
+prog(0.86, "skins...")
 local Misc = loadModule("nl/modules/misc.lua", Common)
+prog(0.93, "finishing...")
 if not (Aimbot and ESP and Move and Misc) then warn("[nl] modules failed") return end
 
 local Mods = {Aimbot=Aimbot, ESP=ESP}
@@ -79,42 +129,22 @@ local function ensureSkins()
     task.spawn(function() Skins.start(C) end)
 end
 
--- imgui menu
-local Im = loadModule("nl/ui/imgui.lua", Common, C, Mods)
-Im.build()
-
--- tab bar buttons (find strip by name; fallback legacy scan)
-local win = Im.win
-local tabsBar = win:FindFirstChild("TabStrip")
-if not tabsBar then
-    for _, ch in ipairs(win:GetChildren()) do
-        if ch:IsA("Frame") and ch.Size.Y.Offset == 28 then tabsBar = ch break end
-    end
-end
-if not tabsBar then
-    for _, ch in ipairs(win:GetChildren()) do
-        if ch:IsA("Frame") and ch.Position.Y.Offset == 32 then tabsBar = ch break end
-    end
-end
-assert(tabsBar, "[nl] tab strip not found")
+-- imgui menu (real build at end)
 
 local pages = {"Aimbot", "Silent", "ESP", "Combat", "Skins", "Move", "Misc"}
 local groups = {} -- page -> {left widgets parent, right}
 local cur = "Aimbot"
+
+-- real menu build: tabs created inside imgui (direct refs, no searching)
+prog(0.96, "menu...")
+local Im = loadModule("nl/ui/imgui.lua", Common, C, Mods)
+if not Im then warn("[nl] ui failed") return end
 
 local function clearCols()
     for _, c in ipairs({Im.left, Im.right}) do
         for _, w in ipairs(c:GetChildren()) do
             if not w:IsA("UIListLayout") and not w:IsA("UIPadding") then w:Destroy() end
         end
-    end
-end
-
-local tabBtns = {}
-local function paintTabs()
-    for n, b in pairs(tabBtns) do
-        b.BackgroundColor3 = (n == cur) and Im.ACC or Im.ROW
-        b.TextColor3 = (n == cur) and Color3.new(1,1,1) or Im.DIM
     end
 end
 
@@ -238,28 +268,14 @@ local function buildPage(name)
     end
 end
 
-if tabsBar then
-    for _, n in ipairs(pages) do
-        local b = Instance.new("TextButton")
-        b.Size = UDim2.new(0, 72, 1, 0) b.BackgroundColor3 = Im.ROW
-        b.BorderSizePixel = 0
-        b.Text = n b.TextColor3 = Im.DIM b.Font = Enum.Font.GothamBold b.TextSize = 11
-        b.AutoButtonColor = false b.Parent = tabsBar
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
-        tabBtns[n] = b
-        b.MouseButton1Click:Connect(function()
-            cur = n paintTabs() buildPage(n)
-            if Im.paintCat then Im.paintCat(pages, cur, function(nn)
-                cur = nn paintTabs() buildPage(nn)
-            end) end
-        end)
-    end
-    paintTabs()
-end
-if Im.paintCat then Im.paintCat(pages, cur, function(nn)
-    cur = nn paintTabs() buildPage(nn)
-end) end
+prog(1, "ready")
+pcall(function() splashGui:Destroy() end)
+-- destroy the splash that imgui.build also makes (we already showed ours)
+Im.build(pages, cur, function(n) cur = n buildPage(n) end)
+Im.finish()
 buildPage(cur)
+-- sync left category list with tabs
+if Im.paintCat then Im.paintCat(pages, cur, function(n) cur = n buildPage(n) end) end
 
 getgenv().rivalspro = {cfg = C, Mods = Mods}
 Common.notify("rivals.pro", "NL modular loaded | INS = menu")

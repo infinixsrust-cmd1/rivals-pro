@@ -46,7 +46,10 @@ function Im.icon(name, size)
     return img
 end
 
-function Im.build()
+function Im.build(pages, curName, onPick)
+    pages = pages or {"Aimbot"}
+    curName = curName or pages[1]
+    onPick = onPick or function() end
     local parent
     do
         local okH, h = pcall(function() return gethui and gethui() end)
@@ -62,6 +65,30 @@ function Im.build()
     gui.Name = "rivalspro" gui.ResetOnSpawn = false gui.Parent = parent
     Im.gui = gui
 
+    -- LOADING SPLASH (medusa style, no icons, text only)
+    local splash = Instance.new("Frame")
+    splash.Size = UDim2.new(0, 340, 0, 120) splash.Position = UDim2.new(0.5, -170, 0.5, -60)
+    splash.BackgroundColor3 = Im.BG splash.BorderSizePixel = 0 splash.Parent = gui
+    Instance.new("UICorner", splash).CornerRadius = UDim.new(0, 8)
+    local sl = Instance.new("TextLabel")
+    sl.Size = UDim2.new(1, 0, 0, 30) sl.Position = UDim2.new(0, 0, 0, 12)
+    sl.BackgroundTransparency = 1 sl.Text = "MEDUSA"
+    sl.TextColor3 = Im.TXT sl.Font = Enum.Font.GothamBlack sl.TextSize = 20 sl.Parent = splash
+    local ss = Instance.new("TextLabel")
+    ss.Name = "SplashStatus" ss.Size = UDim2.new(1, 0, 0, 16) ss.Position = UDim2.new(0, 0, 0, 44)
+    ss.BackgroundTransparency = 1 ss.Text = "loading..."
+    ss.TextColor3 = Im.DIM ss.Font = Enum.Font.Gotham ss.TextSize = 11 sl.Parent = splash
+    local sbar = Instance.new("Frame")
+    sbar.Size = UDim2.new(1, -40, 0, 6) sbar.Position = UDim2.new(0, 20, 0, 72)
+    sbar.BackgroundColor3 = Im.OFF sbar.BorderSizePixel = 0 sbar.Parent = splash
+    Instance.new("UICorner", sbar).CornerRadius = UDim.new(1, 0)
+    local sfill = Instance.new("Frame")
+    sfill.Size = UDim2.new(0, 0, 1, 0) sfill.BorderSizePixel = 0
+    sfill.BackgroundColor3 = Im.ACC sfill.Parent = sbar
+    Instance.new("UICorner", sfill).CornerRadius = UDim.new(1, 0)
+    Im.splash, Im.splashFill, Im.splashStatus = splash, sfill, ss
+    win.Visible = false
+
     -- main window
     local win = Instance.new("Frame")
     win.Size = UDim2.new(0, 620, 0, 400) win.Position = UDim2.new(0.5, -310, 0.5, -200)
@@ -70,11 +97,13 @@ function Im.build()
     Instance.new("UICorner", win).CornerRadius = UDim.new(0, 8)
     Im.win = win
 
-    -- header: logo + name + build date (medusa top-left)
+    -- header: text logo + build date (no icons)
     local head = Instance.new("Frame")
     head.Size = UDim2.new(1, 0, 0, 52) head.BackgroundTransparency = 1 head.Parent = win
-    local logo = Im.icon("pulse_ico", 26)
-    logo.Position = UDim2.new(0, 14, 0, 8) logo.ImageColor3 = Im.ACC logo.Parent = head
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 10, 0, 10) dot.Position = UDim2.new(0, 16, 0, 16)
+    dot.BackgroundColor3 = Im.ACC dot.BorderSizePixel = 0 dot.Parent = head
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
     local ttl = Instance.new("TextLabel")
     ttl.Position = UDim2.new(0, 46, 0, 6) ttl.Size = UDim2.new(0, 200, 0, 22)
     ttl.BackgroundTransparency = 1 ttl.Text = "MEDUSA" ttl.TextColor3 = Im.TXT
@@ -87,39 +116,49 @@ function Im.build()
     sub.Font = Enum.Font.Gotham sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left sub.Parent = head
 
-    -- top icon bar (medusa top-right): home/modules/visuals/loot/utilities/configs
-    local iconbar = Instance.new("Frame")
-    iconbar.Size = UDim2.new(0, 260, 0, 30) iconbar.Position = UDim2.new(1, -270, 0, 12)
-    iconbar.BackgroundColor3 = Im.PANEL iconbar.BorderSizePixel = 0 iconbar.Parent = head
-    Instance.new("UICorner", iconbar).CornerRadius = UDim.new(0, 6)
-    local il = Instance.new("UIListLayout", iconbar)
-    il.FillDirection = Enum.FillDirection.Horizontal il.Padding = UDim.new(0, 2)
-    il.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    il.VerticalAlignment = Enum.VerticalAlignment.Center
-    Im.iconBtns = {}
-    local icons = {"home", "modules", "visuals", "hud", "utilities", "configs", "search"}
-    for _, n in ipairs(icons) do
-        local b = Instance.new("ImageButton")
-        b.Size = UDim2.new(0, 26, 0, 24) b.BackgroundTransparency = 1
-        b.ImageColor3 = Im.DIM b.AutoButtonColor = false b.Parent = iconbar
-        local ok, path = pcall(function()
-            if getcustomasset then return getcustomasset("rivals-pro/assets/icons/" .. n .. ".png") end
-            return nil
-        end)
-        if ok and path then b.Image = path else b.Text = "" end
-        b.MouseEnter:Connect(function() b.ImageColor3 = Im.ACC end)
-        b.MouseLeave:Connect(function() b.ImageColor3 = Im.DIM end)
-        Im.iconBtns[n] = b
-    end
+    -- version tag top-right (text only, no icons)
+    local ver = Instance.new("TextLabel")
+    ver.Size = UDim2.new(0, 200, 0, 20) ver.Position = UDim2.new(1, -210, 0, 14)
+    ver.BackgroundColor3 = Im.PANEL ver.BorderSizePixel = 0
+    ver.Text = "v3 LASTEST" ver.TextColor3 = Im.DIM
+    ver.Font = Enum.Font.Gotham ver.TextSize = 11 ver.Parent = head
+    Instance.new("UICorner", ver).CornerRadius = UDim.new(0, 6)
 
-    -- tab row is driven by init.lua (finds Frame at Y=32 area); keep compatible:
-    -- medusa has no text tabs; we keep a slim tab strip under header for init.lua hooks
+    -- tab strip: buttons created HERE with direct refs (no searching)
     local tabs = Instance.new("Frame")
     tabs.Name = "TabStrip"
     tabs.Size = UDim2.new(1, -16, 0, 28) tabs.Position = UDim2.new(0, 8, 0, 56)
     tabs.BackgroundTransparency = 1 tabs.Parent = win
     local tl = Instance.new("UIListLayout", tabs)
     tl.FillDirection = Enum.FillDirection.Horizontal tl.Padding = UDim.new(0, 4)
+    Im.tabsBar = tabs
+    Im.tabBtns = {}
+    Im.curTab = curName
+    local function paintTabs()
+        for n, b in pairs(Im.tabBtns) do
+            local act = (n == Im.curTab)
+            b.BackgroundColor3 = act and Im.ACC or Im.ROW
+            b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
+        end
+        if Im.paintCat then
+            Im.paintCat(pages, Im.curTab, function(nn)
+                Im.curTab = nn paintTabs() onPick(nn)
+            end)
+        end
+    end
+    for _, n in ipairs(pages) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 78, 1, 0) b.BackgroundColor3 = Im.ROW
+        b.BorderSizePixel = 0
+        b.Text = n b.Font = Enum.Font.GothamBold b.TextSize = 11
+        b.TextColor3 = Im.DIM b.AutoButtonColor = false b.Parent = tabs
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+        Im.tabBtns[n] = b
+        b.MouseButton1Click:Connect(function()
+            Im.curTab = n paintTabs() onPick(n)
+        end)
+    end
+    paintTabs()
 
     -- content: left category list + right single panel (medusa: list left, settings right)
     local cat = Instance.new("Frame")
@@ -178,7 +217,6 @@ function Im.build()
             win.Visible = not win.Visible
         end
     end)
-
     -- watermark
     local wm = Instance.new("TextLabel")
     wm.Size = UDim2.new(0, 260, 0, 20) wm.Position = UDim2.new(0, 10, 0, 10)
@@ -202,6 +240,18 @@ function Im.build()
     end)
 
     return Im
+end
+
+-- splash progress 0..1 + text; call during load, then Im.finish()
+function Im.progress(pct, text)
+    pcall(function()
+        Im.splashFill.Size = UDim2.new(math.clamp(pct or 0, 0, 1), 0, 1, 0)
+        if text then Im.splashStatus.Text = text end
+    end)
+end
+function Im.finish()
+    pcall(function() Im.splash:Destroy() end)
+    pcall(function() Im.win.Visible = true end)
 end
 
 -- ---- medusa widgets ----

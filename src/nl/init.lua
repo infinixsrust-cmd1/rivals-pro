@@ -193,16 +193,25 @@ if not Im then
     pcall(function() splashTxt.Text = "ERR: menu" end)
     warn("[nl] ui failed") return
 end
+-- boot diagnostics: which widget fns exist?
+do
+    local keys = {}
+    for k, v in pairs(Im) do
+        if typeof(v) == "function" then keys[#keys+1] = k end
+    end
+    table.sort(keys)
+    print("[nl] ui fns: " .. table.concat(keys, ","))
+end
 
 local function safeBuild(n)
     cur = n
     local ok, err = pcall(buildPage, n)
     if not ok then
-        local full = tostring(err)
+        local full = tostring(err) .. "\n" .. tostring(debug.traceback())
         warn("[nl] page " .. tostring(n) .. ": " .. full)
         pcall(function()
             local e = Im.status(Im.left, 80)
-            e.Text = "ERR: " .. full:sub(1, 300)
+            e.Text = "ERR: " .. tostring(err):sub(1, 300)
         end)
     end
 end

@@ -167,6 +167,41 @@ function Skin.start(C)
                     end)
                 end
             end)
+            -- VIEWMODEL inject: game snapshots weapon data at spawn, ignoring
+            -- later GetWeaponData merges. Hook the constructor so our skin
+            -- lands in the viewmodel at creation. No server calls at all.
+            pcall(function()
+                local LP2 = Common.LP
+                local ps = LP2 and LP2:FindFirstChild("PlayerScripts")
+                local ciMod = ps and ps:FindFirstChild("ClientItem", true)
+                if ciMod then
+                    local CI = require(ciMod)
+                    if CI and CI._CreateViewModel and not Skin._vmHook then
+                        Skin._vmHook = true
+                        local orig = CI._CreateViewModel
+                        CI._CreateViewModel = function(self, ref)
+                            pcall(function()
+                                local wpn = self.Name
+                                local pl = self.ClientFighter and self.ClientFighter.Player
+                                local eq = Skin.equipped[wpn]
+                                if pl == LP2 and eq and eq.Skin and ref then
+                                    local okD, dk = pcall(function() return self:ToEnum("Data") end)
+                                    local okS, sk = pcall(function() return self:ToEnum("Skin") end)
+                                    local okN, nk = pcall(function() return self:ToEnum("Name") end)
+                                    if okD and okS and okN and ref[dk] then
+                                        ref[dk][sk] = eq.Skin
+                                        ref[dk][nk] = eq.Skin.Name
+                                    elseif ref.Data then
+                                        ref.Data.Skin = eq.Skin
+                                        ref.Data.Name = eq.Skin.Name
+                                    end
+                                end
+                            end)
+                            return orig(self, ref)
+                        end
+                    end
+                end
+            end)
             Skin.libs = true
             set("unlocked: pick skin below")
         end)

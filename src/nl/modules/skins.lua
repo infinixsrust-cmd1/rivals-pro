@@ -149,6 +149,19 @@ function Skin.start(C)
                     return d
                 end
             end)
+            -- locker reads inventory via DataController:Get("CosmeticInventory"):
+            -- return all-true proxy so every skin shows as owned (read-path only)
+            pcall(function()
+                local oGet = DCC.Get
+                local proxy = setmetatable({}, {
+                    __index = function() return true end,
+                    __newindex = function() end,
+                })
+                DCC.Get = function(self, key)
+                    if key == "CosmeticInventory" then return proxy end
+                    return oGet(self, key)
+                end
+            end)
             Skin.libs = true
             C.Skin.Status = "ready (safe mode: pick skins in locker)"
         end)

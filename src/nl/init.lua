@@ -327,9 +327,18 @@ if not okBuild then
     return
 end
 Im.finish()
-buildPage(cur)
--- sync left category list with tabs
-if Im.paintCat then Im.paintCat(pages, cur, function(n) cur = n buildPage(n) end) end
+-- synced navigation: tabs + left list always agree
+local function go(n) Im.select(n, function(nn) cur = nn buildPage(nn) end) end
+-- rewire tab buttons through select (built inside imgui)
+for n, b in pairs(Im.tabBtns) do
+    -- clear old connections by cloning
+    local nb = b:Clone()
+    nb.Parent = b.Parent
+    b:Destroy()
+    Im.tabBtns[n] = nb
+    nb.MouseButton1Click:Connect(function() go(n) end)
+end
+go(cur)
 
 getgenv().rivalspro = {cfg = C, Mods = Mods}
 Common.notify("rivals.pro", "NL modular loaded | INS = menu")

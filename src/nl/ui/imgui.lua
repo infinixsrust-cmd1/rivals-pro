@@ -146,10 +146,10 @@ function Im.build(pages, curName, onPick)
             end)
         end
     end
-    for _, n in ipairs(pages) do
+    for idx, n in ipairs(pages) do
         local b = Instance.new("TextButton")
         b.Size = UDim2.new(0, 78, 1, 0) b.BackgroundColor3 = Im.ROW
-        b.BorderSizePixel = 0
+        b.BorderSizePixel = 0 b.LayoutOrder = idx
         b.Text = n b.Font = Enum.Font.GothamBold b.TextSize = 11
         b.TextColor3 = Im.DIM b.AutoButtonColor = false b.Parent = tabs
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
@@ -159,6 +159,19 @@ function Im.build(pages, curName, onPick)
         end)
     end
     paintTabs()
+    -- single entry to switch page: repaints tabs + cat, then builds content
+    function Im.select(name, onPickFn)
+        Im.curTab = name
+        paintTabs()
+        if Im.paintCat and Im._pages then
+            Im.paintCat(Im._pages, Im.curTab, function(nn)
+                Im.select(nn, onPickFn)
+            end)
+        end
+        if onPickFn then onPickFn(name) end
+    end
+    Im._pages = pages
+    Im._onPick = onPick
 
     -- content: left category list + right single panel (medusa: list left, settings right)
     local cat = Instance.new("Frame")

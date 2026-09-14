@@ -133,6 +133,20 @@ function Aimbot.start(C)
         if not pt then return end
         local c = Common.cam()
         if not c then return end
+        -- AIMLOCK: hard snap, no smoothing — glued to the bone
+        if A.Lock then
+            if A.FP and typeof(mousemoverel) == "function" then
+                local mp = Common.UIS:GetMouseLocation()
+                local sp = Common.toScreen(Common.predict(pt, A.Pred))
+                local dx, dy = sp.X - mp.X, sp.Y - mp.Y
+                if math.abs(dx) > 0 or math.abs(dy) > 0 then
+                    pcall(mousemoverel, dx, dy)
+                end
+                return
+            end
+            c.CFrame = CFrame.new(c.CFrame.Position, Common.predict(pt, A.Pred))
+            return
+        end
         -- FIRST PERSON FIX: game owns the camera in FP, CFrame fights it.
         -- mousemoverel moves the real mouse -> camera follows naturally.
         if A.FP and typeof(mousemoverel) == "function" then

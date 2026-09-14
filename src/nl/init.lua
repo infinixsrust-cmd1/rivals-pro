@@ -60,7 +60,7 @@ getgenv()._rp_draw = {}
 local C = {
     Aim = {Enabled=false, Mode="Hold", Key=Enum.KeyCode.E, Part="Head",
         Smooth=6, FOV=130, ShowFOV=true, Team=true, Wall=true, Dead=true,
-        Pred=0.12, Sticky=true, Dot=false, FP=true},
+        Pred=0.12, Sticky=true, Dot=false, FP=true, Lock=false},
     Silent = {Enabled=false, Hit=80, Part="Head", Team=true, Wall=true, Dist=900},
     ESP = {Enabled=false, Box=true, Name=true, HP=true, Dist=true, Tracer=false,
         Team=true, MaxD=2000, Color=Color3.fromRGB(90,140,255)},
@@ -201,6 +201,7 @@ local function buildPage(name)
     if name == "Aimbot" then
         Im.group(L, "aimbot")
         Im.checkbox(L, "enabled", C.Aim, "Enabled")
+        Im.checkbox(L, "AIMLOCK (hard snap)", C.Aim, "Lock")
         Im.combo(L, "mode", C.Aim, "Mode", {"Hold", "Toggle"})
         Im.combo(L, "bone", C.Aim, "Part", {"Head", "Chest", "Legs", "Random"})
         Im.slider(L, "smoothness", C.Aim, "Smooth", 1, 20, 1)

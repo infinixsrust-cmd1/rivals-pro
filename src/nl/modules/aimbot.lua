@@ -133,6 +133,19 @@ function Aimbot.start(C)
         if not pt then return end
         local c = Common.cam()
         if not c then return end
+        -- FIRST PERSON FIX: game owns the camera in FP, CFrame fights it.
+        -- mousemoverel moves the real mouse -> camera follows naturally.
+        if A.FP and typeof(mousemoverel) == "function" then
+            local mp = Common.UIS:GetMouseLocation()
+            local sp = Common.toScreen(Common.predict(pt, A.Pred))
+            local dx, dy = sp.X - mp.X, sp.Y - mp.Y
+            -- deadzone 1px stops jitter; gain scaled by Smooth (invert: high smooth = small steps)
+            if math.abs(dx) > 1 or math.abs(dy) > 1 then
+                local k = math.clamp(12 / math.max(A.Smooth, 1), 0.4, 6)
+                pcall(mousemoverel, dx * 0.5 * k, dy * 0.5 * k)
+            end
+            return
+        end
         local goal = CFrame.new(c.CFrame.Position, Common.predict(pt, A.Pred))
         local s = math.clamp(A.Smooth, 1, 20)
         local alpha = math.clamp(1 - math.exp(-dt * (30 / s) * 2), 0.02, 1)

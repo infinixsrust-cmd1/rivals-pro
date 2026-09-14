@@ -162,6 +162,25 @@ function Skin.start(C)
                     return oGet(self, key)
                 end
             end)
+            -- locker may read CurrentData.CosmeticInventory field directly:
+            -- metatable the REAL table so missing keys read as owned
+            task.spawn(function()
+                for _ = 1, 20 do
+                    local done = pcall(function()
+                        local cd = DCC.CurrentData
+                        local inv = cd and cd.CosmeticInventory
+                        if typeof(inv) == "table" and not Skin._invPatched then
+                            setmetatable(inv, {
+                                __index = function() return true end,
+                            })
+                            Skin._invPatched = true
+                        end
+                        return Skin._invPatched
+                    end)
+                    if done and Skin._invPatched then break end
+                    task.wait(1)
+                end
+            end)
             Skin.libs = true
             C.Skin.Status = "ready (safe mode: pick skins in locker)"
         end)

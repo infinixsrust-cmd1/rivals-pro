@@ -60,7 +60,7 @@ getgenv()._rp_draw = {}
 local C = {
     Aim = {Enabled=false, Mode="Hold", Key=Enum.KeyCode.E, Part="Head",
         Smooth=6, FOV=130, ShowFOV=true, Team=true, Wall=true, Dead=true,
-        Pred=0.12, Sticky=true, Dot=false},
+        Pred=0.12, Sticky=true, Dot=false, FP=true},
     Silent = {Enabled=false, Hit=80, Part="Head", Team=true, Wall=true, Dist=900},
     ESP = {Enabled=false, Box=true, Name=true, HP=true, Dist=true, Tracer=false,
         Team=true, MaxD=2000, Color=Color3.fromRGB(90,140,255)},
@@ -207,6 +207,7 @@ local function buildPage(name)
         Im.slider(L, "fov", C.Aim, "FOV", 20, 400, 5)
         Im.group(R, "assist")
         Im.slider(R, "prediction", C.Aim, "Pred", 0, 0.3, 0.01)
+        Im.checkbox(R, "mouse move - 1st person", C.Aim, "FP")
         Im.checkbox(R, "show fov", C.Aim, "ShowFOV")
         Im.checkbox(R, "target dot", C.Aim, "Dot")
         Im.checkbox(R, "team check", C.Aim, "Team")

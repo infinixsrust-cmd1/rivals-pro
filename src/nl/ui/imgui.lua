@@ -134,15 +134,18 @@ function Im.build(pages, curName, onPick)
     Im.tabsBar = tabs
     Im.tabBtns = {}
     Im.curTab = curName
+    Im._pages = pages
+    Im._onPick = onPick
     local function paintTabs()
         for n, b in pairs(Im.tabBtns) do
             local act = (n == Im.curTab)
             b.BackgroundColor3 = act and Im.ACC or Im.ROW
             b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
         end
+        -- cat list ALWAYS routes through select (no stale paths)
         if Im.paintCat then
             Im.paintCat(pages, Im.curTab, function(nn)
-                Im.curTab = nn paintTabs() onPick(nn)
+                Im.select(nn, Im._onPick)
             end)
         end
     end
@@ -155,17 +158,25 @@ function Im.build(pages, curName, onPick)
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
         Im.tabBtns[n] = b
         b.MouseButton1Click:Connect(function()
-            Im.curTab = n paintTabs() onPick(n)
+            Im.select(n, nil)
+            if Im._onPick then Im._onPick(n) end
         end)
     end
     paintTabs()
     -- single entry to switch page: repaints tabs + cat, then builds content
     function Im.select(name, onPickFn)
         Im.curTab = name
-        paintTabs()
-        if Im.paintCat and Im._pages then
-            Im.paintCat(Im._pages, Im.curTab, function(nn)
-                Im.select(nn, onPickFn)
+        if onPickFn then Im._onPick = onPickFn end
+        -- repaint tabs
+        for n, b in pairs(Im.tabBtns) do
+            local act = (n == Im.curTab)
+            b.BackgroundColor3 = act and Im.ACC or Im.ROW
+            b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
+        end
+        if Im.paintCat then
+            Im.paintCat(pages, Im.curTab, function(nn)
+                Im.select(nn, nil)
+                if Im._onPick then Im._onPick(nn) end
             end)
         end
         if onPickFn then onPickFn(name) end

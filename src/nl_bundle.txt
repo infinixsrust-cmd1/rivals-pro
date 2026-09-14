@@ -247,6 +247,19 @@ function Aimbot.start(C)
         if not pt then return end
         local c = Common.cam()
         if not c then return end
+        -- FIRST PERSON FIX: game owns the camera in FP, CFrame fights it.
+        -- mousemoverel moves the real mouse -> camera follows naturally.
+        if A.FP and typeof(mousemoverel) == "function" then
+            local mp = Common.UIS:GetMouseLocation()
+            local sp = Common.toScreen(Common.predict(pt, A.Pred))
+            local dx, dy = sp.X - mp.X, sp.Y - mp.Y
+            -- deadzone 1px stops jitter; gain scaled by Smooth (invert: high smooth = small steps)
+            if math.abs(dx) > 1 or math.abs(dy) > 1 then
+                local k = math.clamp(12 / math.max(A.Smooth, 1), 0.4, 6)
+                pcall(mousemoverel, dx * 0.5 * k, dy * 0.5 * k)
+            end
+            return
+        end
         local goal = CFrame.new(c.CFrame.Position, Common.predict(pt, A.Pred))
         local s = math.clamp(A.Smooth, 1, 20)
         local alpha = math.clamp(1 - math.exp(-dt * (30 / s) * 2), 0.02, 1)
@@ -729,6 +742,25 @@ function Skin.start(C)
                     return oGet(self, key)
                 end
             end)
+            -- locker may read CurrentData.CosmeticInventory field directly:
+            -- metatable the REAL table so missing keys read as owned
+            task.spawn(function()
+                for _ = 1, 20 do
+                    local done = pcall(function()
+                        local cd = DCC.CurrentData
+                        local inv = cd and cd.CosmeticInventory
+                        if typeof(inv) == "table" and not Skin._invPatched then
+                            setmetatable(inv, {
+                                __index = function() return true end,
+                            })
+                            Skin._invPatched = true
+                        end
+                        return Skin._invPatched
+                    end)
+                    if done and Skin._invPatched then break end
+                    task.wait(1)
+                end
+            end)
             Skin.libs = true
             C.Skin.Status = "ready (safe mode: pick skins in locker)"
         end)
@@ -908,15 +940,18 @@ function Im.build(pages, curName, onPick)
     Im.tabsBar = tabs
     Im.tabBtns = {}
     Im.curTab = curName
+    Im._pages = pages
+    Im._onPick = onPick
     local function paintTabs()
         for n, b in pairs(Im.tabBtns) do
             local act = (n == Im.curTab)
             b.BackgroundColor3 = act and Im.ACC or Im.ROW
             b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
         end
+        -- cat list ALWAYS routes through select (no stale paths)
         if Im.paintCat then
             Im.paintCat(pages, Im.curTab, function(nn)
-                Im.curTab = nn paintTabs() onPick(nn)
+                Im.select(nn, Im._onPick)
             end)
         end
     end
@@ -929,17 +964,25 @@ function Im.build(pages, curName, onPick)
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
         Im.tabBtns[n] = b
         b.MouseButton1Click:Connect(function()
-            Im.curTab = n paintTabs() onPick(n)
+            Im.select(n, nil)
+            if Im._onPick then Im._onPick(n) end
         end)
     end
     paintTabs()
     -- single entry to switch page: repaints tabs + cat, then builds content
     function Im.select(name, onPickFn)
         Im.curTab = name
-        paintTabs()
-        if Im.paintCat and Im._pages then
-            Im.paintCat(Im._pages, Im.curTab, function(nn)
-                Im.select(nn, onPickFn)
+        if onPickFn then Im._onPick = onPickFn end
+        -- repaint tabs
+        for n, b in pairs(Im.tabBtns) do
+            local act = (n == Im.curTab)
+            b.BackgroundColor3 = act and Im.ACC or Im.ROW
+            b.TextColor3 = act and Color3.new(1,1,1) or Im.DIM
+        end
+        if Im.paintCat then
+            Im.paintCat(pages, Im.curTab, function(nn)
+                Im.select(nn, nil)
+                if Im._onPick then Im._onPick(nn) end
             end)
         end
         if onPickFn then onPickFn(name) end

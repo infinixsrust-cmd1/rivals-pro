@@ -491,7 +491,194 @@ RS.RenderStepped:Connect(function()
     end
 end)
 
--- ============ PREMIUM GUI ============
+-- ============ SKIN CHANGER (CosmeticLibrary technique, cf. Mandog23 / voldstrap) ============
+-- client-side: patches ownership + injects Skin/Wrap/Charm into viewmodels.
+-- needs hookmetamethod. if game updated module names, update MOD_NAMES below.
+C.Skin = {Enabled=false, Weapon="Assault Rifle", Skin="", Wrap="", Status="idle"}
+local Skin = {libs=false, equipped={}, mods={}}
+task.spawn(function()
+    pcall(function()
+        local RSv = game:GetService("ReplicatedStorage")
+        local mods = RSv:WaitForChild("Modules", 15)
+        if not mods then C.Skin.Status = "no Modules" return end
+        local cl = mods:WaitForChild("CosmeticLibrary", 10)
+        local il = mods:WaitForChild("ItemLibrary", 10)
+        local ps = LP:WaitForChild("PlayerScripts", 15)
+        local ct = ps and ps:WaitForChild("Controllers", 10)
+        local dc = ct and ct:WaitForChild("PlayerDataController", 10)
+        if not (cl and il and dc) then C.Skin.Status = "no lib modules" return end
+        local CLB, ILB, DCC = require(cl), require(il), require(dc)
+        Skin.mods = {CLB=CLB, ILB=ILB, DCC=DCC}
+        pcall(function()
+            CLB.OwnsCosmeticNormally = function() return true end
+            CLB.OwnsCosmeticUniversally = function() return true end
+            CLB.OwnsCosmeticForSomething = function() return true end
+            CLB.OwnsCosmeticForWeapon = function() return true end
+            local oOwn = CLB.OwnsCosmetic
+            CLB.OwnsCosmetic = function(self, inv, name, wpn)
+                if name and string.find(tostring(name), "MISSING_") then
+                    return oOwn(self, inv, name, wpn)
+                end
+                return true
+            end
+        end)
+        pcall(function()
+            DCC.OwnsAllWeapons = function() return true end
+            local oGWD = DCC.GetWeaponData
+            DCC.GetWeaponData = function(self, wpn)
+                local d = {Unlocked=true, Level=100, XP=99999}
+                local ok, od = pcall(oGWD, self, wpn)
+                if ok and typeof(od) == "table" then
+                    for k, v in pairs(od) do d[k] = v end
+                end
+                if Skin.equipped[wpn] then
+                    for kt, vd in pairs(Skin.equipped[wpn]) do d[kt] = vd end
+                end
+                return d
+            end
+        end)
+        -- viewmodel injection
+        pcall(function()
+            local ciMod = ps.Modules.ClientReplicatedClasses.ClientFighter.ClientItem
+            local CI = require(ciMod)
+            if CI and CI._CreateViewModel then
+                local orig = CI._CreateViewModel
+                CI._CreateViewModel = function(self, ref)
+                    local wpn = self.Name
+                    local pl = self.ClientFighter and self.ClientFighter.Player
+                    if pl == LP and Skin.equipped[wpn] and Skin.equipped[wpn].Skin and ref then
+                        pcall(function()
+                            local dk = self:ToEnum("Data")
+                            local sk = self:ToEnum("Skin")
+                            local nk = self:ToEnum("Name")
+                            if ref[dk] then
+                                ref[dk][sk] = Skin.equipped[wpn].Skin
+                                ref[dk][nk] = Skin.equipped[wpn].Skin.Name
+                            end
+                        end)
+                    end
+                    return orig(self, ref)
+                end
+            end
+        end)
+        pcall(function()
+            local vmMod = ps.Modules.ClientReplicatedClasses.ClientFighter.ClientItem:FindFirstChild("ClientViewModel")
+            if vmMod then
+                local CVM = require(vmMod)
+                if CVM.GetWrap then
+                    local origW = CVM.GetWrap
+                    CVM.GetWrap = function(self)
+                        local wn = self.ClientItem and self.ClientItem.Name
+                        local pl = self.ClientItem and self.ClientItem.ClientFighter
+                            and self.ClientItem.ClientFighter.Player
+                        if wn and pl == LP and Skin.equipped[wn] and Skin.equipped[wn].Wrap then
+                            return Skin.equipped[wn].Wrap
+                        end
+                        return origW(self)
+                    end
+                end
+            end
+        end)
+        -- intercept equip remote so game saves our pick
+        pcall(function()
+            local rem = RSv:WaitForChild("Remotes", 10)
+            local dr = rem and rem:WaitForChild("Data", 10)
+            local eq = dr and dr:WaitForChild("EquipCosmetic", 10)
+            if eq and typeof(hookmetamethod) == "function" then
+                local old
+                old = hookmetamethod(game, "__namecall", function(self, ...)
+                    if getnamecallmethod() == "FireServer" and self == eq and C.Skin.Enabled then
+                        local wpn, ctype, cname, opts = ...
+                        if cname and cname ~= "" and cname ~= "None" then
+                            local data = Skin.Clone(cname, ctype)
+                            if data then
+                                Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+                                Skin.equipped[wpn][ctype] = data
+                                C.Skin.Status = "equipped " .. tostring(cname)
+                                pcall(function()
+                                    Skin.mods.DCC.CurrentData:Replicate("WeaponInventory")
+                                end)
+                                return
+                            end
+                        end
+                    end
+                    return old(self, ...)
+                end)
+            end
+        end)
+        Skin.libs = true
+        C.Skin.Status = "ready"
+    end)
+end)
+function Skin.Clone(name, ctype)
+    local CLB = Skin.mods.CLB
+    if not CLB or not CLB.Cosmetics then return nil end
+    local resolved = (CLB.RENAMED_COSMETICS and CLB.RENAMED_COSMETICS[name]) or name
+    local base = CLB.Cosmetics[resolved]
+    if not base then
+        local lw = string.lower(tostring(resolved))
+        for k, v in pairs(CLB.Cosmetics) do
+            if string.lower(tostring(k)) == lw then base, resolved = v, k break end
+        end
+    end
+    if not base then return nil end
+    local d = {}
+    for k, v in pairs(base) do d[k] = v end
+    d.Name, d.Type, d.Seed = resolved, d.Type or ctype, math.random(1, 1000000)
+    return d
+end
+function Skin.List(limit)
+    local CLB = Skin.mods.CLB
+    local out = {}
+    if not CLB or not CLB.Cosmetics then return out end
+    for k in pairs(CLB.Cosmetics) do
+        out[#out+1] = tostring(k)
+        if #out >= (limit or 200) then break end
+    end
+    table.sort(out)
+    return out
+end
+function Skin.Weapons()
+    local ILB = Skin.mods.ILB
+    local out = {}
+    if ILB and ILB.Items then
+        for k in pairs(ILB.Items) do
+            if not string.find(tostring(k), "MISSING_") then out[#out+1] = tostring(k) end
+        end
+        table.sort(out)
+    else
+        for _, w in ipairs({"Assault Rifle","SMG","Shotgun","Sniper","Pistol","Revolver","Knife","Katana","Scythe","Grenade"}) do
+            out[#out+1] = w
+        end
+    end
+    return out
+end
+function Skin.Apply()
+    if not Skin.libs then C.Skin.Status = "libs not ready" return end
+    local wpn = C.Skin.Weapon
+    local CLB = Skin.mods.CLB
+    if C.Skin.Skin ~= "" then
+        local d = Skin.Clone(C.Skin.Skin, "Skin")
+        if d then
+            Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+            Skin.equipped[wpn].Skin = d
+        else
+            C.Skin.Status = "skin not found: " .. C.Skin.Skin
+            return
+        end
+    end
+    if C.Skin.Wrap ~= "" then
+        local d = Skin.Clone(C.Skin.Wrap, "Wrap")
+        if d then
+            Skin.equipped[wpn] = Skin.equipped[wpn] or {}
+            Skin.equipped[wpn].Wrap = d
+        end
+    end
+    pcall(function() Skin.mods.DCC.CurrentData:Replicate("WeaponInventory") end)
+    C.Skin.Status = "applied to " .. wpn .. " (re-equip weapon)"
+end
+
+-- ============ PREMIUM GUI (neverlose style) ============
 local ACC = Color3.fromRGB(255, 0, 60)
 local BG = Color3.fromRGB(10, 10, 14)
 local PANEL = Color3.fromRGB(18, 18, 24)
@@ -523,7 +710,7 @@ top.Size = UDim2.new(1, 0, 0, 44) top.BackgroundColor3 = PANEL top.BorderSizePix
 Instance.new("UICorner", top).CornerRadius = UDim.new(0, 10)
 local ttl = Instance.new("TextLabel")
 ttl.Size = UDim2.new(0.6, 0, 1, 0) ttl.Position = UDim2.new(0, 14, 0, 0)
-ttl.BackgroundTransparency = 1 ttl.Text = "RIVALS.PRO  v2.0"
+ttl.BackgroundTransparency = 1 ttl.Text = "RIVALS.PRO  v3 NL"
 ttl.TextColor3 = Color3.new(1,1,1) ttl.Font = Enum.Font.GothamBlack ttl.TextSize = 15
 ttl.TextXAlignment = Enum.TextXAlignment.Left ttl.Parent = top
 local st = Instance.new("TextLabel")
@@ -546,7 +733,7 @@ sPad.PaddingTop = UDim.new(0, 6) sPad.PaddingLeft = UDim.new(0, 6) sPad.PaddingR
 -- pages
 local pages = {}
 local tabBtns = {}
-local pageNames = {"Aim", "Visuals", "Combat", "Move", "Misc"}
+local pageNames = {"Aim", "Visuals", "Combat", "Skins", "Move", "Misc"}
 for _, nm in ipairs(pageNames) do
     local pg = Instance.new("ScrollingFrame")
     pg.Name = nm pg.Size = UDim2.new(1, -144, 1, -62) pg.Position = UDim2.new(0, 136, 0, 50)
@@ -699,6 +886,66 @@ toggle(pages["Move"], "Noclip", C.Move, "Noclip")
 toggle(pages["Move"], "Infinite jump", C.Move, "InfJump")
 toggle(pages["Move"], "No knockback", C.Move, "Knock")
 
+-- SKINS page (neverlose style groupboxes)
+section(pages["Skins"], "changer")
+toggle(pages["Skins"], "Skin changer enabled", C.Skin, "Enabled")
+do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -4, 0, 30) b.BackgroundColor3 = ROWC
+    b.TextColor3 = Color3.new(1,1,1) b.Font = Enum.Font.Gotham b.TextSize = 12
+    b.TextXAlignment = Enum.TextXAlignment.Left b.AutoButtonColor = false b.Parent = pages["Skins"]
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    local function rf() b.Text = "  Weapon: < " .. tostring(C.Skin.Weapon) .. " >" end
+    rf()
+    b.MouseButton1Click:Connect(function()
+        local ws2 = Skin.Weapons()
+        if #ws2 == 0 then return end
+        local i = 1
+        for k, v in ipairs(ws2) do if v == C.Skin.Weapon then i = k break end end
+        C.Skin.Weapon = ws2[(i % #ws2) + 1]
+        rf()
+    end)
+end
+do
+    -- skin name field + apply
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -4, 0, 30) box.BackgroundColor3 = Color3.fromRGB(30,30,38)
+    box.TextColor3 = Color3.new(1,1,1) box.Font = Enum.Font.Gotham box.TextSize = 12
+    box.PlaceholderText = "Skin name (exact, e.g. Hyperbeast)" box.Text = ""
+    box.Parent = pages["Skins"]
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+    box.FocusLost:Connect(function() C.Skin.Skin = box.Text end)
+    local box2 = Instance.new("TextBox")
+    box2.Size = UDim2.new(1, -4, 0, 30) box2.BackgroundColor3 = Color3.fromRGB(30,30,38)
+    box2.TextColor3 = Color3.new(1,1,1) box2.Font = Enum.Font.Gotham box2.TextSize = 12
+    box2.PlaceholderText = "Wrap name (optional)" box2.Text = ""
+    box2.Parent = pages["Skins"]
+    Instance.new("UICorner", box2).CornerRadius = UDim.new(0, 6)
+    box2.FocusLost:Connect(function() C.Skin.Wrap = box2.Text end)
+    local ap = Instance.new("TextButton")
+    ap.Size = UDim2.new(1, -4, 0, 32) ap.BackgroundColor3 = ACC
+    ap.Text = "APPLY SKIN" ap.TextColor3 = Color3.new(1,1,1)
+    ap.Font = Enum.Font.GothamBold ap.TextSize = 13 ap.Parent = pages["Skins"]
+    Instance.new("UICorner", ap).CornerRadius = UDim.new(0, 6)
+    ap.MouseButton1Click:Connect(function()
+        C.Skin.Skin = box.Text C.Skin.Wrap = box2.Text
+        Skin.Apply()
+        st.Text = "skins: " .. C.Skin.Status
+    end)
+    local st2 = Instance.new("TextLabel")
+    st2.Size = UDim2.new(1, -4, 0, 44) st2.BackgroundColor3 = ROWC
+    st2.TextColor3 = Color3.fromRGB(160,160,170) st2.Font = Enum.Font.Gotham st2.TextSize = 11
+    st2.TextWrapped = true st2.Text = "Status: idle. Open skins via in-game locker once, then type exact name. Re-equip weapon after apply."
+    st2.Parent = pages["Skins"]
+    Instance.new("UICorner", st2).CornerRadius = UDim.new(0, 6)
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            pcall(function() st2.Text = "Status: " .. C.Skin.Status end)
+        end
+    end)
+end
+
 -- MISC page
 section(pages["Misc"], "system")
 toggle(pages["Misc"], "Anti AFK", C.Misc, "AFK")
@@ -729,5 +976,25 @@ task.spawn(function()
     end
 end)
 
-notify("rivals.pro", "PREMIUM v2.0 loaded | RightShift = menu")
-print("rivals.pro premium v2.0 ok")
+-- neverlose-style watermark
+do
+    local wm = Instance.new("TextLabel")
+    wm.Size = UDim2.new(0, 230, 0, 22) wm.Position = UDim2.new(0, 10, 0, 10)
+    wm.BackgroundColor3 = BG wm.BorderSizePixel = 0
+    wm.TextColor3 = Color3.new(1,1,1) wm.Font = Enum.Font.GothamBold wm.TextSize = 11
+    wm.TextXAlignment = Enum.TextXAlignment.Left wm.Parent = gui
+    Instance.new("UICorner", wm).CornerRadius = UDim.new(0, 5)
+    local wms = Instance.new("UIStroke", wm) wms.Color = ACC wms.Thickness = 1
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            pcall(function()
+                local fps = math.floor(1 / math.max(RS.RenderStepped:Wait(), 1e-4))
+                wm.Text = "  rivals.pro  |  " .. tostring(fps) .. " fps  |  " .. targetName
+            end)
+        end
+    end)
+end
+
+notify("rivals.pro", "v3 NL loaded | RightShift = menu | Skins tab ready")
+print("rivals.pro v3 NL ok")
